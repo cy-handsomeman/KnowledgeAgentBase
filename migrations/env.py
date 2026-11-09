@@ -12,6 +12,7 @@ sys.path.insert(0, str(BASE_DIR / "backend" / "app"))
 
 from core.settings import settings  # noqa: E402
 from db.base import Base  # noqa: E402
+import models  # noqa: E402,F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
