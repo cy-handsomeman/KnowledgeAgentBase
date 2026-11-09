@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     llm_base_url: str
     llm_model: str
     embedding_model: str
+    jwt_secret_key: str
+    jwt_expire_minutes: int = 120
 
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",
