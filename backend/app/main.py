@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from core.settings import settings
 from schemas.question import QuestionRequest
 
 app = FastAPI(title="企业文档知识库")
@@ -7,7 +8,11 @@ app = FastAPI(title="企业文档知识库")
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "database_url_configured": bool(settings.database_url),
+        "llm_model": settings.llm_model,
+    }
 
 
 @app.post("/api/questions/validate")
