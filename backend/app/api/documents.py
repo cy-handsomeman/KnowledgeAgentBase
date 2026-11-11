@@ -18,6 +18,7 @@ from services.permissions import (
     can_edit_document,
     can_edit_knowledge_base,
 )
+from services.indexing import index_document
 
 router = APIRouter(prefix="/api", tags=["documents"])
 
@@ -84,6 +85,8 @@ def create_document(
     )
     db.add(document)
     db.commit()
+    db.refresh(document)
+    index_document(db, document)
     db.refresh(document)
     return document
 
@@ -155,6 +158,8 @@ async def upload_document(
         target.unlink(missing_ok=True)
         raise
     db.refresh(document)
+    index_document(db, document)
+    db.refresh(document)
     return document
 
 
@@ -219,6 +224,32 @@ def update_document(
         document.content = payload.content
 
     db.commit()
+    db.refresh(document)
+    if payload.content is not None:
+        index_document(db, document)
+        db.refresh(document)
+    return document
+
+
+@router.post("/documents/{document_id}/reindex", response_model=DocumentOut)
+def reindex_document(
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not can_access_document(db, current_user.id, document_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="文档不存在或无权访问",
+        )
+    if not can_edit_document(db, current_user.id, document_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权重建该文档索引",
+        )
+
+    document = _get_document_or_404(db, document_id)
+    index_document(db, document)
     db.refresh(document)
     return document
 
