@@ -32,6 +32,17 @@ function setActiveNav(name) {
   });
 }
 
+function canEditKnowledgeBase(knowledgeBase) {
+  if (!knowledgeBase) {
+    return false;
+  }
+  if (knowledgeBase.scope_type === "personal") {
+    return true;
+  }
+  const group = state.groups.find((item) => item.id === knowledgeBase.group_id);
+  return Boolean(group) && ["editor", "admin"].includes(group.role);
+}
+
 async function init() {
   requireLogin();
 
@@ -89,6 +100,8 @@ function renderEnterprise() {
   const groupBases = state.knowledgeBases.filter(
     (kb) => kb.scope_type === "enterprise_group" && kb.group_id === group.id
   );
+  const selectedKb = groupBases.find((kb) => kb.id === state.selectedKbId) || groupBases[0] || null;
+  state.selectedKbId = selectedKb ? selectedKb.id : null;
 
   view.innerHTML = `
     <div class="page-head">
@@ -113,7 +126,7 @@ function renderEnterprise() {
 
     <div class="panel">
       <h3>${escapeHtml(group.name)} 的知识库</h3>
-      <div class="card-list" id="kb-list">
+      <div class="card-list">
         ${groupBases.length ? groupBases.map((kb) => `
           <div class="card ${kb.id === state.selectedKbId ? "selected" : ""}" data-kb-id="${kb.id}">
             <div class="title">${escapeHtml(kb.name)}</div>
@@ -123,10 +136,7 @@ function renderEnterprise() {
       </div>
     </div>
 
-    <div class="panel">
-      <h3>文档</h3>
-      <div class="empty">文档列表与上传将在后续步骤接入</div>
-    </div>
+    <div class="panel" id="doc-panel"><div class="empty">文档加载中…</div></div>
   `;
 
   view.querySelectorAll("[data-group-id]").forEach((card) => {
@@ -157,12 +167,20 @@ function renderEnterprise() {
     }
     location.hash = `#/chat?kb=${knowledgeBase.id}&q=${encodeURIComponent(question)}`;
   });
+
+  if (selectedKb) {
+    loadDocuments(selectedKb);
+  } else {
+    document.getElementById("doc-panel").innerHTML = '<div class="empty">该群组还没有知识库</div>';
+  }
 }
 
 function renderPersonal() {
   setActiveNav("personal");
   const view = document.getElementById("view");
   const personalBases = state.knowledgeBases.filter((kb) => kb.scope_type === "personal");
+  const selectedKb = personalBases.find((kb) => kb.id === state.selectedKbId) || personalBases[0] || null;
+  state.selectedKbId = selectedKb ? selectedKb.id : null;
 
   view.innerHTML = `
     <div class="page-head">
@@ -175,7 +193,7 @@ function renderPersonal() {
 
     <div class="panel">
       <h3>我的知识库</h3>
-      <div class="card-list" id="kb-list">
+      <div class="card-list">
         ${personalBases.length ? personalBases.map((kb) => `
           <div class="card ${kb.id === state.selectedKbId ? "selected" : ""}" data-kb-id="${kb.id}">
             <div class="title">${escapeHtml(kb.name)}</div>
@@ -185,10 +203,7 @@ function renderPersonal() {
       </div>
     </div>
 
-    <div class="panel">
-      <h3>文档</h3>
-      <div class="empty">文档列表与上传将在后续步骤接入</div>
-    </div>
+    <div class="panel" id="doc-panel"><div class="empty">文档加载中…</div></div>
   `;
 
   view.querySelectorAll("[data-kb-id]").forEach((card) => {
@@ -211,6 +226,153 @@ function renderPersonal() {
     }
     location.hash = `#/chat?kb=${knowledgeBase.id}&q=${encodeURIComponent(question)}`;
   });
+
+  if (selectedKb) {
+    loadDocuments(selectedKb);
+  } else {
+    document.getElementById("doc-panel").innerHTML = '<div class="empty">你还没有个人知识库</div>';
+  }
+}
+
+async function loadDocuments(knowledgeBase) {
+  const panel = document.getElementById("doc-panel");
+  if (!panel) {
+    return;
+  }
+  const editable = canEditKnowledgeBase(knowledgeBase);
+  panel.innerHTML = '<div class="empty">文档加载中…</div>';
+
+  try {
+    const documents = await apiFetch(`/api/knowledge-bases/${knowledgeBase.id}/documents`);
+    const listHtml = documents.length
+      ? documents.map((doc) => `
+          <div class="card" data-doc-id="${doc.id}">
+            <div class="title">${escapeHtml(doc.title)}<span class="tag">${escapeHtml(doc.status)}</span></div>
+            <div class="meta">${escapeHtml(doc.file_type)} · 更新于 ${escapeHtml(doc.updated_at.replace("T", " ").slice(0, 16))}</div>
+          </div>
+        `).join("")
+      : '<div class="empty">这个知识库还没有文档</div>';
+
+    panel.innerHTML = `
+      <div class="panel-head">
+        <h3>${escapeHtml(knowledgeBase.name)} 的文档</h3>
+        ${editable ? '<button class="primary" id="new-doc">新建文档</button>' : ""}
+      </div>
+      <div class="card-list">${listHtml}</div>
+    `;
+
+    if (editable) {
+      document.getElementById("new-doc").addEventListener("click", () => {
+        openDocumentEditor(knowledgeBase, null);
+      });
+    }
+
+    panel.querySelectorAll("[data-doc-id]").forEach((card) => {
+      card.addEventListener("click", async () => {
+        try {
+          const documentData = await apiFetch(`/api/documents/${card.dataset.docId}`);
+          openDocumentEditor(knowledgeBase, documentData);
+        } catch (error) {
+          alert(error.message);
+        }
+      });
+    });
+  } catch (error) {
+    panel.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function openDocumentEditor(knowledgeBase, documentData) {
+  const editable = canEditKnowledgeBase(knowledgeBase);
+  const isNew = documentData === null;
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal">
+      <h3>${isNew ? "新建文档" : editable ? "编辑文档" : "查看文档"}</h3>
+      <label>
+        标题
+        <input id="doc-title" maxlength="255" ${editable ? "" : "readonly"}>
+      </label>
+      <label>
+        正文（Markdown / 纯文本）
+        <textarea id="doc-content" rows="12" ${editable ? "" : "readonly"}></textarea>
+      </label>
+      <p id="doc-error" class="error" hidden></p>
+      <div class="modal-actions">
+        ${documentData && editable ? '<button class="danger" id="doc-delete">删除</button>' : ""}
+        <span class="spacer"></span>
+        <button class="link" id="doc-close">关闭</button>
+        ${editable ? '<button class="primary" id="doc-save">保存</button>' : ""}
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const titleInput = overlay.querySelector("#doc-title");
+  const contentInput = overlay.querySelector("#doc-content");
+  const errorBox = overlay.querySelector("#doc-error");
+  titleInput.value = documentData ? documentData.title : "";
+  contentInput.value = documentData ? documentData.content || "" : "";
+  titleInput.focus();
+
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      close();
+    }
+  });
+  overlay.querySelector("#doc-close").addEventListener("click", close);
+
+  if (editable) {
+    overlay.querySelector("#doc-save").addEventListener("click", async () => {
+      errorBox.hidden = true;
+      const payload = {
+        title: titleInput.value.trim(),
+        content: contentInput.value,
+      };
+      if (!payload.title) {
+        errorBox.textContent = "标题不能为空";
+        errorBox.hidden = false;
+        return;
+      }
+      try {
+        if (isNew) {
+          await apiFetch(`/api/knowledge-bases/${knowledgeBase.id}/documents`, {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+        } else {
+          await apiFetch(`/api/documents/${documentData.id}`, {
+            method: "PUT",
+            body: JSON.stringify(payload),
+          });
+        }
+        close();
+        loadDocuments(knowledgeBase);
+      } catch (error) {
+        errorBox.textContent = error.message;
+        errorBox.hidden = false;
+      }
+    });
+
+    if (documentData) {
+      overlay.querySelector("#doc-delete").addEventListener("click", async () => {
+        if (!confirm(`确定删除《${documentData.title}》吗？`)) {
+          return;
+        }
+        try {
+          await apiFetch(`/api/documents/${documentData.id}`, { method: "DELETE" });
+          close();
+          loadDocuments(knowledgeBase);
+        } catch (error) {
+          errorBox.textContent = error.message;
+          errorBox.hidden = false;
+        }
+      });
+    }
+  }
 }
 
 function renderChat() {

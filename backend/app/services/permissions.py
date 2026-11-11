@@ -51,3 +51,26 @@ def can_access_document(db: Session, user_id: int, document_id: int) -> bool:
     if document is None:
         return False
     return can_access_knowledge_base(db, user_id, document.knowledge_base_id)
+
+
+def can_edit_knowledge_base(db: Session, user_id: int, knowledge_base_id: int) -> bool:
+    knowledge_base = db.get(KnowledgeBase, knowledge_base_id)
+    if knowledge_base is None:
+        return False
+
+    if knowledge_base.scope_type == "personal":
+        return knowledge_base.owner_user_id == user_id
+
+    if knowledge_base.scope_type == "enterprise_group":
+        return knowledge_base.group_id is not None and can_edit_group(
+            db, user_id, knowledge_base.group_id
+        )
+
+    return False
+
+
+def can_edit_document(db: Session, user_id: int, document_id: int) -> bool:
+    document = db.get(Document, document_id)
+    if document is None:
+        return False
+    return can_edit_knowledge_base(db, user_id, document.knowledge_base_id)

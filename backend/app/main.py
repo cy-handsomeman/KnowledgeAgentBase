@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from api.auth import router as auth_router
+from api.documents import router as documents_router
 from api.groups import router as groups_router
 from api.knowledge_bases import router as knowledge_bases_router
 from core.settings import settings
@@ -16,6 +17,7 @@ app = FastAPI(title="企业文档知识库")
 app.include_router(auth_router)
 app.include_router(groups_router)
 app.include_router(knowledge_bases_router)
+app.include_router(documents_router)
 
 
 @app.get("/api/health")
