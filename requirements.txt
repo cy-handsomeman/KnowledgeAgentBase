@@ -8,3 +8,4 @@ PyJWT==2.15.1
 PyMuPDF==2.1
 chromadb==1.5.9
 sentence-transformers==6.2.0
+pytest==9.2.0
