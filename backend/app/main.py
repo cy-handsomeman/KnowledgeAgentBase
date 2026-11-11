@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from api.auth import router as auth_router
+from api.ask import router as ask_router
 from api.documents import router as documents_router
 from api.groups import router as groups_router
 from api.knowledge_bases import router as knowledge_bases_router
@@ -20,6 +21,7 @@ app.include_router(groups_router)
 app.include_router(knowledge_bases_router)
 app.include_router(documents_router)
 app.include_router(search_router)
+app.include_router(ask_router)
 
 
 @app.get("/api/health")

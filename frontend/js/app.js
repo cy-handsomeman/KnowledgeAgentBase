@@ -426,16 +426,65 @@ function renderChat() {
     </div>
 
     <div class="panel">
-      <h3>AI 回答</h3>
-      <div class="empty">接入大模型后在这里生成回答（第 32 步）。</div>
+      <div class="panel-head">
+        <h3>AI 回答</h3>
+        ${knowledgeBase && question ? '<button class="primary" id="ask-button">生成回答</button>' : ""}
+      </div>
+      <div id="ask-answer"><div class="empty">点击“生成回答”，系统会把检索到的片段交给大模型。</div></div>
     </div>
   `;
 
   if (knowledgeBase && question) {
     loadSearchResults(knowledgeBase, question);
+    document.getElementById("ask-button").addEventListener("click", () => {
+      askQuestion(knowledgeBase, question);
+    });
   } else {
     document.getElementById("search-results").innerHTML =
       '<div class="empty">请从企业知识库或个人知识库页面输入问题并发起搜索。</div>';
+  }
+}
+
+async function askQuestion(knowledgeBase, question) {
+  const container = document.getElementById("ask-answer");
+  const button = document.getElementById("ask-button");
+  if (!container) {
+    return;
+  }
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = "生成中…";
+  }
+  container.innerHTML = '<div class="empty">大模型生成中，请稍候…</div>';
+
+  try {
+    const data = await apiFetch(`/api/knowledge-bases/${knowledgeBase.id}/ask`, {
+      method: "POST",
+      body: JSON.stringify({ question }),
+    });
+
+    const sourcesHtml = data.sources.length
+      ? `<div class="meta">来源：${data.sources.map((source) => {
+          const location = source.page_number ? ` 第${source.page_number}页` : "";
+          return `${escapeHtml(source.document_title)}${location}`;
+        }).join("；")}</div>`
+      : "";
+
+    container.innerHTML = `
+      <div class="card">
+        <div class="title">${escapeHtml(data.answer)}</div>
+        ${sourcesHtml}
+        <div class="meta">${data.has_evidence ? "依据检索资料生成" : "没有可用资料"}</div>
+      </div>
+    `;
+  } catch (error) {
+    container.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "生成回答";
+    }
   }
 }
 
