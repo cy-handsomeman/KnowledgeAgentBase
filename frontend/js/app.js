@@ -256,12 +256,38 @@ async function loadDocuments(knowledgeBase) {
     panel.innerHTML = `
       <div class="panel-head">
         <h3>${escapeHtml(knowledgeBase.name)} 的文档</h3>
-        ${editable ? '<button class="primary" id="new-doc">新建文档</button>' : ""}
+        ${editable ? `
+          <div class="actions">
+            <button class="secondary" id="upload-doc">上传 PDF/TXT</button>
+            <button class="primary" id="new-doc">新建文档</button>
+            <input type="file" id="upload-input" accept=".pdf,.txt" hidden>
+          </div>
+        ` : ""}
       </div>
       <div class="card-list">${listHtml}</div>
     `;
 
     if (editable) {
+      const uploadInput = panel.querySelector("#upload-input");
+      panel.querySelector("#upload-doc").addEventListener("click", () => uploadInput.click());
+      uploadInput.addEventListener("change", async () => {
+        const file = uploadInput.files[0];
+        if (!file) {
+          return;
+        }
+        const form = new FormData();
+        form.append("file", file);
+        try {
+          await apiFetch(`/api/knowledge-bases/${knowledgeBase.id}/documents/upload`, {
+            method: "POST",
+            body: form,
+          });
+          loadDocuments(knowledgeBase);
+        } catch (error) {
+          alert(error.message);
+        }
+      });
+
       document.getElementById("new-doc").addEventListener("click", () => {
         openDocumentEditor(knowledgeBase, null);
       });

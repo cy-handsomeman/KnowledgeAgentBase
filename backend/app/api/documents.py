@@ -1,8 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from api.deps import get_current_user
+from core.settings import settings
 from db.session import get_db
 from models.document import Document
 from models.knowledge_base import KnowledgeBase
@@ -16,6 +20,16 @@ from services.permissions import (
 )
 
 router = APIRouter(prefix="/api", tags=["documents"])
+
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+ALLOWED_EXTENSIONS = {".pdf": "pdf", ".txt": "txt"}
+
+
+def _remove_uploaded_file(file_path: str) -> None:
+    path = Path(file_path).resolve()
+    upload_dir = Path(settings.upload_dir).resolve()
+    if upload_dir in path.parents and path.is_file():
+        path.unlink()
 
 
 def _require_edit_access(db: Session, user_id: int, knowledge_base_id: int) -> None:
@@ -70,6 +84,76 @@ def create_document(
     )
     db.add(document)
     db.commit()
+    db.refresh(document)
+    return document
+
+
+@router.post(
+    "/knowledge-bases/{knowledge_base_id}/documents/upload",
+    response_model=DocumentOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_document(
+    knowledge_base_id: int,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    knowledge_base = db.get(KnowledgeBase, knowledge_base_id)
+    if knowledge_base is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="知识库不存在或无权访问",
+        )
+    _require_edit_access(db, current_user.id, knowledge_base_id)
+
+    original_filename = Path(file.filename or "").name
+    suffix = Path(original_filename).suffix.lower()
+    if suffix not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="只允许上传 PDF 或 TXT 文件",
+        )
+
+    upload_dir = Path(settings.upload_dir)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    stored_name = f"{uuid.uuid4().hex}{suffix}"
+    target = upload_dir / stored_name
+
+    size = 0
+    try:
+        with target.open("wb") as output:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_UPLOAD_SIZE:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail="文件超过 10MB 限制",
+                    )
+                output.write(chunk)
+    except HTTPException:
+        target.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+
+    document = Document(
+        knowledge_base_id=knowledge_base_id,
+        title=Path(original_filename).stem or stored_name,
+        original_filename=original_filename,
+        file_path=str(target),
+        file_type=ALLOWED_EXTENSIONS[suffix],
+        file_size=size,
+        uploaded_by=current_user.id,
+        status="PROCESSING",
+    )
+    db.add(document)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        target.unlink(missing_ok=True)
+        raise
     db.refresh(document)
     return document
 
@@ -157,5 +241,8 @@ def delete_document(
         )
 
     document = _get_document_or_404(db, document_id)
+    file_path = document.file_path
     db.delete(document)
     db.commit()
+    if file_path:
+        _remove_uploaded_file(file_path)
