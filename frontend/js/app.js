@@ -411,21 +411,64 @@ function renderChat() {
 
   view.innerHTML = `
     <div class="page-head"><h2>智能体问答</h2></div>
-    <div class="panel chat-box">
-      <div>
-        <div class="meta muted">检索范围</div>
+
+    <div class="panel">
+      <h3>检索范围</h3>
+      <div class="card">
         <div class="title">${knowledgeBase ? escapeHtml(knowledgeBase.name) : "未指定（请从知识库页面发起提问）"}</div>
-      </div>
-      <div>
-        <div class="meta muted">你的问题</div>
-        <div class="title">${question ? escapeHtml(question) : "暂无问题"}</div>
-      </div>
-      <div class="empty">
-        问答接口与来源展示将在后续步骤接入。<br>
-        当前页面已经可以接收知识库页面传来的“问题 + 检索范围”。
+        <div class="meta">你的问题：${question ? escapeHtml(question) : "暂无问题"}</div>
       </div>
     </div>
+
+    <div class="panel">
+      <h3>检索到的片段</h3>
+      <div id="search-results"><div class="empty">检索中…</div></div>
+    </div>
+
+    <div class="panel">
+      <h3>AI 回答</h3>
+      <div class="empty">接入大模型后在这里生成回答（第 32 步）。</div>
+    </div>
   `;
+
+  if (knowledgeBase && question) {
+    loadSearchResults(knowledgeBase, question);
+  } else {
+    document.getElementById("search-results").innerHTML =
+      '<div class="empty">请从企业知识库或个人知识库页面输入问题并发起搜索。</div>';
+  }
+}
+
+async function loadSearchResults(knowledgeBase, question) {
+  const container = document.getElementById("search-results");
+  if (!container) {
+    return;
+  }
+
+  try {
+    const data = await apiFetch(`/api/knowledge-bases/${knowledgeBase.id}/search`, {
+      method: "POST",
+      body: JSON.stringify({ question }),
+    });
+
+    if (!data.matches.length) {
+      container.innerHTML = '<div class="empty">没有检索到相关片段</div>';
+      return;
+    }
+
+    container.innerHTML = data.matches.map((match) => `
+      <div class="card">
+        <div class="title">
+          ${escapeHtml(match.document_title)}
+          <span class="tag">${match.page_number ? `第 ${match.page_number} 页` : `片段 ${match.chunk_index + 1}`}</span>
+          <span class="tag">相似度 ${(match.score * 100).toFixed(1)}%</span>
+        </div>
+        <div class="meta">${escapeHtml(match.content)}</div>
+      </div>
+    `).join("");
+  } catch (error) {
+    container.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+  }
 }
 
 init();
