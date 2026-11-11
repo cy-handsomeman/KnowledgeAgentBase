@@ -6,3 +6,5 @@ alembic==1.20.1
 bcrypt==5.0.0
 PyJWT==2.15.1
 PyMuPDF==2.1
+chromadb==1.5.9
+sentence-transformers==6.2.0

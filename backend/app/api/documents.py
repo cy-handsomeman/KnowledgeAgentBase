@@ -19,6 +19,7 @@ from services.permissions import (
     can_edit_knowledge_base,
 )
 from services.indexing import index_document
+from services.vector_store import delete_document_vectors
 
 router = APIRouter(prefix="/api", tags=["documents"])
 
@@ -273,6 +274,7 @@ def delete_document(
 
     document = _get_document_or_404(db, document_id)
     file_path = document.file_path
+    delete_document_vectors(document.id)
     db.delete(document)
     db.commit()
     if file_path:
