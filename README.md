@@ -1,0 +1,277 @@
+# 企业文档知识库系统（KnowledgeAgentBase）
+
+面向企业员工的文档知识管理 Web 应用：按群组管理共享知识库，同时支持个人知识库，并提供基于检索增强生成（RAG）的智能问答，回答会附带真实来源（文档名、页码、片段）。
+
+技术栈：FastAPI + MySQL + SQLAlchemy + Alembic + Chroma + BGE 中文向量模型 + DeepSeek（OpenAI 兼容接口）+ 原生 HTML/CSS/JS。
+
+---
+
+## 一、功能范围
+
+- **企业知识库**：按群组组织，群组内角色分 `member`（查看/搜索）、`editor`（+文档增删改）、`admin`（+成员管理）。
+- **个人知识库**：仅所有者可见。
+- **文档管理**：在线创建/编辑 Markdown、上传 PDF/TXT（≤10MB）、自动解析、分块、向量化。
+- **智能问答**：在指定知识库范围内检索片段，调用大模型生成回答，前端展示来源与相似度。
+- **权限控制**：全部在后端校验，前端按钮显隐只影响体验。
+
+---
+
+## 二、环境要求
+
+| 组件 | 版本要求 | 说明 |
+| --- | --- | --- |
+| Windows | 10/11 | 本项目在 Windows + PowerShell 下开发 |
+| Python | 3.12 | 使用 `py` 启动器 |
+| MySQL Server | 8.0+ | 需要本机服务，Navicat 只是客户端 |
+| Git | 任意较新版本 | 版本管理 |
+
+---
+
+## 三、从零启动步骤
+
+### 1. 打开项目目录
+
+```powershell
+Set-Location 'D:\1mywork\AgentSpace'
+Get-Location
+```
+
+预期输出 `D:\1mywork\AgentSpace`。
+
+用 VS Code 打开：
+
+```powershell
+code .
+```
+
+或 VS Code → 文件 → 打开文件夹 → 选择该目录。
+
+### 2. 创建并激活虚拟环境
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+如果提示“禁止运行脚本”：
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+```
+
+激活成功后提示符前会出现 `(.venv)`。
+
+在 VS Code 中按 `Ctrl+Shift+P` → `Python: Select Interpreter` → 选择：
+
+```text
+D:\1mywork\AgentSpace\.venv\Scripts\python.exe
+```
+
+### 3. 安装依赖
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+首次安装会下载 PyTorch、Chroma、PyMuPDF 等较大依赖，请耐心等待。
+
+### 4. 创建数据库
+
+用 Navicat 连接本机 MySQL（主机 `127.0.0.1`，端口 `3306`），新建查询执行：
+
+```sql
+CREATE DATABASE enterprise_kb
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+```
+
+也可以在 PowerShell 里用 Python 创建（把账号密码换成自己的）：
+
+```powershell
+python -c "import pymysql; c=pymysql.connect(host='127.0.0.1',port=3306,user='root',password='你的密码'); cur=c.cursor(); cur.execute('CREATE DATABASE IF NOT EXISTS enterprise_kb CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'); c.commit(); c.close(); print('ok')"
+```
+
+### 5. 配置 `.env`
+
+复制模板：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+打开 `.env` 填写：
+
+```text
+DATABASE_URL=mysql+pymysql://root:你的密码@127.0.0.1:3306/enterprise_kb
+UPLOAD_DIR=D:/1mywork/AgentSpace/storage/uploads
+CHROMA_DIR=D:/1mywork/AgentSpace/storage/chroma
+LLM_API_KEY=你的 DeepSeek API Key
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MODEL=deepseek-chat
+EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
+JWT_SECRET_KEY=用 python -c "import secrets; print(secrets.token_hex(32))" 生成
+JWT_EXPIRE_MINUTES=120
+```
+
+说明：
+
+- `.env` 已被 `.gitignore` 忽略，**不会上传 GitHub**；
+- `LLM_API_KEY` 未填写时，检索功能正常，点击“生成回答”会提示未配置 Key；
+- 首次使用向量模型会从 HuggingFace 下载约 100MB 权重，之后走本机缓存。
+
+### 6. 执行数据库迁移
+
+```powershell
+.\.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+验证：
+
+```powershell
+.\.venv\Scripts\python.exe -m alembic current
+```
+
+应显示当前版本号（`81740e486989`）。
+
+以后修改了模型文件，新增迁移：
+
+```powershell
+.\.venv\Scripts\python.exe -m alembic revision --autogenerate -m "说明本次变更"
+.\.venv\Scripts\python.exe -m alembic upgrade head
+```
+
+### 7. 准备演示数据（可选但推荐）
+
+```powershell
+.\.venv\Scripts\python.exe scripts\seed_demo.py
+```
+
+脚本可重复执行，会创建：
+
+| 账号 | 密码 | 群组与角色 |
+| --- | --- | --- |
+| `alice` | `Passw0rd!` | 研发部（管理员） |
+| `bob` | `Passw0rd!` | 研发部（成员）、人力资源部（管理员） |
+
+以及研发部知识库、人力资源部知识库、alice 的个人知识库。
+
+### 8. 启动服务
+
+```powershell
+.\.venv\Scripts\python.exe -m fastapi dev backend/app/main.py --port 8000 --reload-dir backend
+```
+
+看到以下输出即成功：
+
+```text
+Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+```
+
+> `--reload-dir backend` 只监听后端代码，避免 `.venv` 里文件变动导致频繁重启。
+
+### 9. 打开前端
+
+浏览器访问：
+
+```text
+http://127.0.0.1:8000/
+```
+
+用 `alice / Passw0rd!` 或 `bob / Passw0rd!` 登录。
+
+接口文档（Swagger）：
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+### 10. 运行测试
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+测试使用独立数据库 `enterprise_kb_test`、独立上传目录和向量目录，不会污染开发数据；首次运行会自动建库建表。
+
+---
+
+## 四、目录结构
+
+```text
+D:\1mywork\AgentSpace
+├── backend\app\
+│   ├── api\            # 接口层：认证、群组、知识库、文档、检索、问答
+│   ├── core\           # 配置读取、密码哈希与 JWT
+│   ├── db\             # 引擎/会话、ORM 基类
+│   ├── models\         # 8 张表的 SQLAlchemy 模型
+│   ├── schemas\        # Pydantic 请求/响应模型
+│   ├── services\       # 权限、解析、分块、索引、向量、检索、LLM、RAG
+│   └── main.py         # 应用入口
+├── frontend\           # 原生 HTML/CSS/JS（由 FastAPI 托管）
+├── migrations\         # Alembic 迁移脚本
+├── scripts\seed_demo.py
+├── storage\            # uploads/ 与 chroma/（均被 Git 忽略）
+├── tests\              # pytest
+├── alembic.ini
+├── requirements.txt
+└── .env.example
+```
+
+---
+
+## 五、主要接口
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/auth/register` | 注册 |
+| POST | `/api/auth/login` | 登录，返回 JWT |
+| GET | `/api/auth/me` | 当前用户 |
+| GET | `/api/groups` | 我加入的群组与角色 |
+| GET | `/api/knowledge-bases` | 我有权访问的知识库 |
+| GET | `/api/knowledge-bases/{id}` | 知识库详情 |
+| GET/POST | `/api/knowledge-bases/{id}/documents` | 文档列表 / 新建在线文档 |
+| POST | `/api/knowledge-bases/{id}/documents/upload` | 上传 PDF/TXT |
+| GET/PUT/DELETE | `/api/documents/{id}` | 文档详情 / 保存 / 删除 |
+| POST | `/api/documents/{id}/reindex` | 重建片段与向量 |
+| POST | `/api/knowledge-bases/{id}/search` | 检索片段（不生成回答） |
+| POST | `/api/knowledge-bases/{id}/ask` | RAG 问答（生成回答 + 来源） |
+
+除注册/登录外，所有接口都需要请求头：
+
+```text
+Authorization: Bearer <access_token>
+```
+
+---
+
+## 六、常见错误排查
+
+| 现象 | 原因与处理 |
+| --- | --- |
+| `无法连接到远程服务器` | 服务没启动。确认终端里 `Uvicorn running`，或先执行 `netstat -ano \| findstr :8000` 检查端口。 |
+| 端口被占用 / 代码改了不生效 | 可能有残留的旧进程。用 `Get-CimInstance Win32_Process -Filter "Name='python.exe'"` 查看，结束占用 8000 端口的进程后重启。 |
+| `ModuleNotFoundError` | 虚拟环境未激活或依赖未安装。确认提示符有 `(.venv)`，再 `pip install -r requirements.txt`。 |
+| 数据库连接失败 | 检查 MySQL 服务是否启动、账号密码是否正确、`enterprise_kb` 是否已创建。 |
+| `Unknown database 'enterprise_kb'` | 还没建库，执行第三步的 SQL。 |
+| `Table 'xxx' doesn't exist` | 未执行迁移：`alembic upgrade head`。 |
+| `alembic check` 报差异 | 有人手工改过表结构。新建迁移对齐，不要直接改正式库。 |
+| 上传返回 400 | 只允许 `.pdf` / `.txt`。 |
+| 上传返回 413 | 文件超过 10MB。 |
+| 上传后状态 `FAILED` | 文件损坏、扫描版 PDF 无文本层，或 TXT 编码无法识别；查看 `error_message`。 |
+| 点击“生成回答”提示未配置 Key | 在 `.env` 填写 `LLM_API_KEY` 后重启服务。 |
+| 大模型返回 401/402 | Key 无效或余额不足，检查 DeepSeek 控制台。 |
+| 首次索引很慢 / 模型下载失败 | 需要下载 BGE 权重。网络受限时先设置镜像：`$env:HF_ENDPOINT="https://hf-mirror.com"` 再启动。 |
+| 页面 404 但接口正常 | 静态文件挂载后需要完整重启一次服务。 |
+| 测试污染数据 | 测试默认使用 `enterprise_kb_test`；如果看到开发库变化，检查 `tests/conftest.py` 的环境变量是否被改动。 |
+
+---
+
+## 七、安全说明
+
+1. `.env` 保存数据库密码、JWT 密钥和大模型 Key，**永不提交**；
+2. 密码只存 bcrypt 哈希（`$2b$12$...`），接口响应模型不包含 `password_hash`；
+3. JWT 有效期默认 120 分钟，服务端不保存令牌，退出登录由前端删除本地令牌；
+4. 所有权限判断集中在 `services/permissions.py`，接口不能绕过；
+5. 上传文件名由服务端用 UUID 重新生成，防止路径穿越；删除文件时限制在上传目录内；
+6. 检索结果返回前会用 MySQL 当前权限二次校验，成员被移除后旧向量不会泄露内容。
