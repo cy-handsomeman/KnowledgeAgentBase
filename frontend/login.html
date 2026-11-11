@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 - 企业文档知识库</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body class="auth-page">
+  <main class="auth-card">
+    <h1>企业文档知识库</h1>
+    <p class="muted">登录后可访问你有权限的知识库</p>
+
+    <form id="login-form" class="form">
+      <label>
+        用户名
+        <input id="username" name="username" autocomplete="username" required>
+      </label>
+      <label>
+        密码
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <button type="submit" class="primary">登录</button>
+      <p id="error" class="error" hidden></p>
+    </form>
+  </main>
+
+  <script src="/js/api.js"></script>
+  <script>
+    if (localStorage.getItem("token")) {
+      location.href = "/";
+    }
+
+    const form = document.getElementById("login-form");
+    const errorBox = document.getElementById("error");
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      errorBox.hidden = true;
+      try {
+        const data = await apiFetch("/api/auth/login", {
+          method: "POST",
+          body: JSON.stringify({
+            username: document.getElementById("username").value.trim(),
+            password: document.getElementById("password").value,
+          }),
+        });
+        localStorage.setItem("token", data.access_token);
+        location.href = "/";
+      } catch (error) {
+        errorBox.textContent = error.message;
+        errorBox.hidden = false;
+      }
+    });
+  </script>
+</body>
+</html>

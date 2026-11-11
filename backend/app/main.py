@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from api.auth import router as auth_router
@@ -6,6 +9,8 @@ from api.groups import router as groups_router
 from api.knowledge_bases import router as knowledge_bases_router
 from core.settings import settings
 from db.session import engine
+
+FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
 app = FastAPI(title="企业文档知识库")
 app.include_router(auth_router)
@@ -27,3 +32,6 @@ def health_db():
     with engine.connect() as connection:
         connection.execute(text("SELECT 1"))
     return {"status": "ok", "database": "connected"}
+
+
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
