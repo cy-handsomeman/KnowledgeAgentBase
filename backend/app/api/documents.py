@@ -130,7 +130,7 @@ async def upload_document(
                 size += len(chunk)
                 if size > MAX_UPLOAD_SIZE:
                     raise HTTPException(
-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                         detail="文件超过 10MB 限制",
                     )
                 output.write(chunk)
