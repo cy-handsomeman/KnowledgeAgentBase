@@ -9,7 +9,7 @@ from models.user import User
 from schemas.ask import AskRequest, AskResponse, SourceOut
 from services.llm import LLMError, chat_completion
 from services.permissions import can_access_knowledge_base
-from services.rag import build_messages
+from services.rag import build_messages, parse_answer
 from services.retrieval import retrieve_matches
 
 router = APIRouter(prefix="/api", tags=["ask"])
@@ -33,12 +33,15 @@ def ask_knowledge_base(
 
     if matches:
         try:
-            answer = chat_completion(build_messages(payload.question, matches))
+            raw_answer = chat_completion(
+                build_messages(payload.question, matches), json_mode=True
+            )
         except LLMError as error:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=str(error),
             )
+        answer, has_evidence = parse_answer(raw_answer, bool(matches))
         sources = [
             SourceOut(
                 document_id=match.document_id,
@@ -49,7 +52,6 @@ def ask_knowledge_base(
             )
             for match in matches
         ]
-        has_evidence = True
     else:
         answer = "根据现有资料无法回答。"
         sources = []

@@ -15,6 +15,7 @@ def chat_completion(
     messages: list[dict],
     temperature: float = 0.2,
     timeout: float = 60.0,
+    json_mode: bool = False,
 ) -> str:
     if not is_llm_configured():
         raise LLMError("尚未配置大模型 API Key，请在 .env 中填写 LLM_API_KEY")
@@ -25,6 +26,8 @@ def chat_completion(
         "messages": messages,
         "temperature": temperature,
     }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
 
     try:
         response = httpx.post(
