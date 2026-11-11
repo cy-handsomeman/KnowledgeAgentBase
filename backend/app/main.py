@@ -2,11 +2,15 @@ from fastapi import FastAPI
 from sqlalchemy import text
 
 from api.auth import router as auth_router
+from api.groups import router as groups_router
+from api.knowledge_bases import router as knowledge_bases_router
 from core.settings import settings
 from db.session import engine
 
 app = FastAPI(title="企业文档知识库")
 app.include_router(auth_router)
+app.include_router(groups_router)
+app.include_router(knowledge_bases_router)
 
 
 @app.get("/api/health")
