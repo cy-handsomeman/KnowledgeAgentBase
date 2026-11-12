@@ -10,8 +10,9 @@
 
 - **企业知识库**：按群组组织，群组内角色分 `member`（查看/搜索）、`editor`（+文档增删改）、`admin`（+成员管理）。
 - **个人知识库**：仅所有者可见。
-- **文档管理**：在线创建/编辑 Markdown、上传 PDF/TXT（≤10MB）、自动解析、分块、向量化。
-- **智能问答**：在指定知识库范围内检索片段，调用大模型生成回答，前端展示来源与相似度。
+- **文档管理**：在线创建/编辑 Markdown、上传 PDF/TXT（≤10MB）、自动解析、分块、向量化；PDF 支持页内预览与下载。
+- **智能问答**：多轮会话（历史随会话保存，追问可理解上下文）、检索增强生成、Markdown 渲染、可点击的 `[n]` 引用角标与来源片段展开。
+- **管理能力**：新建群组/知识库、管理员添加成员/改角色/移除成员、个人知识库自助创建。
 - **权限控制**：全部在后端校验，前端按钮显隐只影响体验。
 
 ---
@@ -228,14 +229,22 @@ D:\1mywork\AgentSpace
 | POST | `/api/auth/login` | 登录，返回 JWT |
 | GET | `/api/auth/me` | 当前用户 |
 | GET | `/api/groups` | 我加入的群组与角色 |
-| GET | `/api/knowledge-bases` | 我有权访问的知识库 |
-| GET | `/api/knowledge-bases/{id}` | 知识库详情 |
+| POST | `/api/groups` | 新建群组（自动成为管理员并创建默认知识库） |
+| GET | `/api/groups/{id}/members` | 群组成员列表 |
+| POST/PATCH/DELETE | `/api/groups/{id}/members` | 添加 / 修改角色 / 移除成员（管理员） |
+| GET | `/api/users?username=` | 按用户名前缀搜索用户（添加成员用） |
+| GET/POST | `/api/knowledge-bases` | 我的知识库 / 新建知识库 |
+| GET/PATCH/DELETE | `/api/knowledge-bases/{id}` | 详情 / 改名 / 删除（仅空库） |
 | GET/POST | `/api/knowledge-bases/{id}/documents` | 文档列表 / 新建在线文档 |
 | POST | `/api/knowledge-bases/{id}/documents/upload` | 上传 PDF/TXT |
 | GET/PUT/DELETE | `/api/documents/{id}` | 文档详情 / 保存 / 删除 |
+| GET | `/api/documents/{id}/download` | 下载或预览原始文件（`?inline=true`） |
 | POST | `/api/documents/{id}/reindex` | 重建片段与向量 |
 | POST | `/api/knowledge-bases/{id}/search` | 检索片段（不生成回答） |
-| POST | `/api/knowledge-bases/{id}/ask` | RAG 问答（生成回答 + 来源） |
+| POST | `/api/knowledge-bases/{id}/ask` | RAG 问答（生成回答 + 来源，支持 `session_id` 多轮） |
+| GET | `/api/chat/sessions` | 我的会话列表 |
+| GET | `/api/chat/sessions/{id}/messages` | 会话消息 |
+| DELETE | `/api/chat/sessions/{id}` | 删除会话 |
 
 除注册/登录外，所有接口都需要请求头：
 

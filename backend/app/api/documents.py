@@ -2,6 +2,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -253,6 +254,42 @@ def reindex_document(
     index_document(db, document)
     db.refresh(document)
     return document
+
+
+@router.get("/documents/{document_id}/download")
+def download_document(
+    document_id: int,
+    inline: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not can_access_document(db, current_user.id, document_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="文档不存在或无权访问",
+        )
+
+    document = _get_document_or_404(db, document_id)
+    if not document.file_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="该文档没有可下载的原始文件",
+        )
+
+    path = Path(document.file_path)
+    if not path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="原始文件不存在",
+        )
+
+    media_type = "application/pdf" if document.file_type == "pdf" else "text/plain"
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=document.original_filename or path.name,
+        content_disposition_type="inline" if inline else "attachment",
+    )
 
 
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)

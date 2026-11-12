@@ -4,6 +4,11 @@ const state = {
   knowledgeBases: [],
   selectedGroupId: null,
   selectedKbId: null,
+  chatSessions: [],
+  chatMessages: [],
+  currentSessionId: null,
+  chatKbId: null,
+  chatSending: false,
 };
 
 const ROLE_LABELS = {
@@ -88,8 +93,15 @@ function renderEnterprise() {
   if (state.groups.length === 0) {
     view.innerHTML = `
       <div class="page-head"><h2>企业知识库</h2></div>
-      <div class="panel"><div class="empty">你还没有加入任何企业群组，请联系管理员添加。</div></div>
+      <div class="panel">
+        <div class="panel-head">
+          <h3>我的群组</h3>
+          <button type="button" class="secondary" id="new-group">新建群组</button>
+        </div>
+        <div class="empty">你还没有加入任何企业群组，可以新建一个，或等待管理员添加。</div>
+      </div>
     `;
+    document.getElementById("new-group").addEventListener("click", openCreateGroupModal);
     return;
   }
 
@@ -113,7 +125,10 @@ function renderEnterprise() {
     </div>
 
     <div class="panel">
-      <h3>我的群组</h3>
+      <div class="panel-head">
+        <h3>我的群组</h3>
+        <button type="button" class="secondary" id="new-group">新建群组</button>
+      </div>
       <div class="card-list">
         ${state.groups.map((item) => `
           <div class="card ${item.id === group.id ? "selected" : ""}" data-group-id="${item.id}">
@@ -125,7 +140,13 @@ function renderEnterprise() {
     </div>
 
     <div class="panel">
-      <h3>${escapeHtml(group.name)} 的知识库</h3>
+      <div class="panel-head">
+        <h3>${escapeHtml(group.name)} 的知识库</h3>
+        <div class="actions">
+          ${["editor", "admin"].includes(group.role) ? '<button type="button" class="secondary" id="new-kb">新建知识库</button>' : ""}
+          ${group.role === "admin" ? '<button type="button" class="secondary" id="manage-members">成员管理</button>' : ""}
+        </div>
+      </div>
       <div class="card-list">
         ${groupBases.length ? groupBases.map((kb) => `
           <div class="card ${kb.id === state.selectedKbId ? "selected" : ""}" data-kb-id="${kb.id}">
@@ -168,6 +189,23 @@ function renderEnterprise() {
     location.hash = `#/chat?kb=${knowledgeBase.id}&q=${encodeURIComponent(question)}`;
   });
 
+  document.getElementById("new-group").addEventListener("click", openCreateGroupModal);
+
+  const newKbButton = document.getElementById("new-kb");
+  if (newKbButton) {
+    newKbButton.addEventListener("click", () => openCreateKnowledgeBaseModal(group));
+  }
+
+  const membersButton = document.getElementById("manage-members");
+  if (membersButton) {
+    membersButton.addEventListener("click", () => {
+      openMembersModal(group, async () => {
+        await refreshWorkspace();
+        renderEnterprise();
+      });
+    });
+  }
+
   if (selectedKb) {
     loadDocuments(selectedKb);
   } else {
@@ -192,7 +230,10 @@ function renderPersonal() {
     </div>
 
     <div class="panel">
-      <h3>我的知识库</h3>
+      <div class="panel-head">
+        <h3>我的知识库</h3>
+        ${personalBases.length === 0 ? '<button type="button" class="secondary" id="new-personal-kb">新建个人知识库</button>' : ""}
+      </div>
       <div class="card-list">
         ${personalBases.length ? personalBases.map((kb) => `
           <div class="card ${kb.id === state.selectedKbId ? "selected" : ""}" data-kb-id="${kb.id}">
@@ -226,6 +267,11 @@ function renderPersonal() {
     }
     location.hash = `#/chat?kb=${knowledgeBase.id}&q=${encodeURIComponent(question)}`;
   });
+
+  const newPersonalKbButton = document.getElementById("new-personal-kb");
+  if (newPersonalKbButton) {
+    newPersonalKbButton.addEventListener("click", openCreatePersonalKbModal);
+  }
 
   if (selectedKb) {
     loadDocuments(selectedKb);
@@ -308,12 +354,122 @@ async function loadDocuments(knowledgeBase) {
   }
 }
 
-function openDocumentEditor(knowledgeBase, documentData) {
-  const editable = canEditKnowledgeBase(knowledgeBase);
-  const isNew = documentData === null;
+async function fetchDocumentBlob(documentId) {
+  const response = await fetch(`/api/documents/${documentId}/download`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (!response.ok) {
+    let detail = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      if (body.detail) {
+        detail = body.detail;
+      }
+    } catch (error) {
+      // 保留状态码信息
+    }
+    throw new Error(detail);
+  }
+  return response.blob();
+}
 
-  const overlay = document.createElement("div");
-  overlay.className = "modal-overlay";
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename || "download";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function renderMarkdownPreview(text) {
+  let html = escapeHtml(text);
+  html = html.replace(/^### (.+)$/gm, "<h4>$1</h4>");
+  html = html.replace(/^## (.+)$/gm, "<h3>$1</h3>");
+  html = html.replace(/^# (.+)$/gm, "<h2>$1</h2>");
+  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/^- (.+)$/gm, "• $1");
+  return html.replace(/\n/g, "<br>");
+}
+
+function openUploadedViewer(overlay, knowledgeBase, documentData, editable) {
+  overlay.innerHTML = `
+    <div class="modal modal-wide">
+      <h3>${escapeHtml(documentData.title)}</h3>
+      <div class="meta">${escapeHtml((documentData.file_type || "").toUpperCase())} · ${documentData.file_size || 0} 字节</div>
+      <div id="doc-preview" class="doc-preview"><div class="empty">加载预览中…</div></div>
+      <p id="doc-error" class="error" hidden></p>
+      <div class="modal-actions">
+        ${editable ? '<button class="danger" id="doc-delete">删除</button>' : ""}
+        <span class="spacer"></span>
+        <button type="button" class="secondary" id="doc-download">下载原文件</button>
+        <button type="button" class="link" id="doc-close">关闭</button>
+      </div>
+    </div>
+  `;
+
+  const container = overlay.querySelector("#doc-preview");
+  const errorBox = overlay.querySelector("#doc-error");
+  const downloadButton = overlay.querySelector("#doc-download");
+  let objectUrl = null;
+
+  const close = () => {
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+    }
+    overlay.remove();
+  };
+
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      close();
+    }
+  });
+  overlay.querySelector("#doc-close").addEventListener("click", close);
+
+  if (editable) {
+    overlay.querySelector("#doc-delete").addEventListener("click", async () => {
+      if (!confirm(`确定删除《${documentData.title}》吗？`)) {
+        return;
+      }
+      try {
+        await apiFetch(`/api/documents/${documentData.id}`, { method: "DELETE" });
+        close();
+        loadDocuments(knowledgeBase);
+      } catch (error) {
+        errorBox.textContent = error.message;
+        errorBox.hidden = false;
+      }
+    });
+  }
+
+  (async () => {
+    try {
+      const blob = await fetchDocumentBlob(documentData.id);
+      downloadButton.addEventListener("click", () => {
+        downloadBlob(blob, documentData.original_filename || documentData.title);
+      });
+
+      if (documentData.file_type === "pdf") {
+        objectUrl = URL.createObjectURL(blob);
+        container.innerHTML = `<embed class="pdf-embed" type="application/pdf" src="${objectUrl}">`;
+      } else {
+        const text = await blob.text();
+        const pre = document.createElement("pre");
+        pre.className = "doc-text";
+        pre.textContent = text;
+        container.innerHTML = "";
+        container.appendChild(pre);
+      }
+    } catch (error) {
+      container.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+    }
+  })();
+}
+
+function openTextEditor(overlay, knowledgeBase, documentData, editable, isNew) {
   overlay.innerHTML = `
     <div class="modal">
       <h3>${isNew ? "新建文档" : editable ? "编辑文档" : "查看文档"}</h3>
@@ -321,27 +477,46 @@ function openDocumentEditor(knowledgeBase, documentData) {
         标题
         <input id="doc-title" maxlength="255" ${editable ? "" : "readonly"}>
       </label>
-      <label>
-        正文（Markdown / 纯文本）
-        <textarea id="doc-content" rows="12" ${editable ? "" : "readonly"}></textarea>
-      </label>
+      <div class="panel-head doc-mode">
+        <span class="meta">正文（Markdown / 纯文本）</span>
+        <button type="button" class="link" id="doc-toggle-preview">预览</button>
+      </div>
+      <textarea id="doc-content" rows="12" ${editable ? "" : "readonly"}></textarea>
+      <div id="doc-preview" class="doc-preview" hidden></div>
       <p id="doc-error" class="error" hidden></p>
       <div class="modal-actions">
         ${documentData && editable ? '<button class="danger" id="doc-delete">删除</button>' : ""}
         <span class="spacer"></span>
-        <button class="link" id="doc-close">关闭</button>
-        ${editable ? '<button class="primary" id="doc-save">保存</button>' : ""}
+        <button type="button" class="link" id="doc-close">关闭</button>
+        ${editable ? '<button type="button" class="primary" id="doc-save">保存</button>' : ""}
       </div>
     </div>
   `;
-  document.body.appendChild(overlay);
 
   const titleInput = overlay.querySelector("#doc-title");
   const contentInput = overlay.querySelector("#doc-content");
+  const previewBox = overlay.querySelector("#doc-preview");
+  const togglePreview = overlay.querySelector("#doc-toggle-preview");
   const errorBox = overlay.querySelector("#doc-error");
+
   titleInput.value = documentData ? documentData.title : "";
   contentInput.value = documentData ? documentData.content || "" : "";
   titleInput.focus();
+
+  let previewing = false;
+  togglePreview.addEventListener("click", () => {
+    previewing = !previewing;
+    if (previewing) {
+      previewBox.innerHTML = renderMarkdownPreview(contentInput.value);
+      previewBox.hidden = false;
+      contentInput.hidden = true;
+      togglePreview.textContent = "编辑";
+    } else {
+      previewBox.hidden = true;
+      contentInput.hidden = false;
+      togglePreview.textContent = "预览";
+    }
+  });
 
   const close = () => overlay.remove();
   overlay.addEventListener("click", (event) => {
@@ -351,30 +526,48 @@ function openDocumentEditor(knowledgeBase, documentData) {
   });
   overlay.querySelector("#doc-close").addEventListener("click", close);
 
-  if (editable) {
-    overlay.querySelector("#doc-save").addEventListener("click", async () => {
-      errorBox.hidden = true;
-      const payload = {
-        title: titleInput.value.trim(),
-        content: contentInput.value,
-      };
-      if (!payload.title) {
-        errorBox.textContent = "标题不能为空";
-        errorBox.hidden = false;
+  if (!editable) {
+    return;
+  }
+
+  overlay.querySelector("#doc-save").addEventListener("click", async () => {
+    errorBox.hidden = true;
+    const payload = {
+      title: titleInput.value.trim(),
+      content: contentInput.value,
+    };
+    if (!payload.title) {
+      errorBox.textContent = "标题不能为空";
+      errorBox.hidden = false;
+      return;
+    }
+    try {
+      if (isNew) {
+        await apiFetch(`/api/knowledge-bases/${knowledgeBase.id}/documents`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+      } else {
+        await apiFetch(`/api/documents/${documentData.id}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+      }
+      close();
+      loadDocuments(knowledgeBase);
+    } catch (error) {
+      errorBox.textContent = error.message;
+      errorBox.hidden = false;
+    }
+  });
+
+  if (documentData) {
+    overlay.querySelector("#doc-delete").addEventListener("click", async () => {
+      if (!confirm(`确定删除《${documentData.title}》吗？`)) {
         return;
       }
       try {
-        if (isNew) {
-          await apiFetch(`/api/knowledge-bases/${knowledgeBase.id}/documents`, {
-            method: "POST",
-            body: JSON.stringify(payload),
-          });
-        } else {
-          await apiFetch(`/api/documents/${documentData.id}`, {
-            method: "PUT",
-            body: JSON.stringify(payload),
-          });
-        }
+        await apiFetch(`/api/documents/${documentData.id}`, { method: "DELETE" });
         close();
         loadDocuments(knowledgeBase);
       } catch (error) {
@@ -382,142 +575,612 @@ function openDocumentEditor(knowledgeBase, documentData) {
         errorBox.hidden = false;
       }
     });
-
-    if (documentData) {
-      overlay.querySelector("#doc-delete").addEventListener("click", async () => {
-        if (!confirm(`确定删除《${documentData.title}》吗？`)) {
-          return;
-        }
-        try {
-          await apiFetch(`/api/documents/${documentData.id}`, { method: "DELETE" });
-          close();
-          loadDocuments(knowledgeBase);
-        } catch (error) {
-          errorBox.textContent = error.message;
-          errorBox.hidden = false;
-        }
-      });
-    }
   }
 }
 
-function renderChat() {
-  setActiveNav("chat");
-  const view = document.getElementById("view");
-  const params = new URLSearchParams((location.hash.split("?")[1] || ""));
-  const question = params.get("q") || "";
-  const knowledgeBaseId = Number(params.get("kb") || 0);
-  const knowledgeBase = state.knowledgeBases.find((kb) => kb.id === knowledgeBaseId);
+function openDocumentEditor(knowledgeBase, documentData) {
+  const editable = canEditKnowledgeBase(knowledgeBase);
+  const isNew = documentData === null;
+  const isUploaded = Boolean(documentData && documentData.file_path);
 
-  view.innerHTML = `
-    <div class="page-head"><h2>智能体问答</h2></div>
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  document.body.appendChild(overlay);
 
-    <div class="panel">
-      <h3>检索范围</h3>
-      <div class="card">
-        <div class="title">${knowledgeBase ? escapeHtml(knowledgeBase.name) : "未指定（请从知识库页面发起提问）"}</div>
-        <div class="meta">你的问题：${question ? escapeHtml(question) : "暂无问题"}</div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h3>检索到的片段</h3>
-      <div id="search-results"><div class="empty">检索中…</div></div>
-    </div>
-
-    <div class="panel">
-      <div class="panel-head">
-        <h3>AI 回答</h3>
-        ${knowledgeBase && question ? '<button class="primary" id="ask-button">生成回答</button>' : ""}
-      </div>
-      <div id="ask-answer"><div class="empty">点击“生成回答”，系统会把检索到的片段交给大模型。</div></div>
-    </div>
-  `;
-
-  if (knowledgeBase && question) {
-    loadSearchResults(knowledgeBase, question);
-    document.getElementById("ask-button").addEventListener("click", () => {
-      askQuestion(knowledgeBase, question);
-    });
+  if (isUploaded) {
+    openUploadedViewer(overlay, knowledgeBase, documentData, editable);
   } else {
-    document.getElementById("search-results").innerHTML =
-      '<div class="empty">请从企业知识库或个人知识库页面输入问题并发起搜索。</div>';
+    openTextEditor(overlay, knowledgeBase, documentData, editable, isNew);
   }
 }
 
-async function askQuestion(knowledgeBase, question) {
-  const container = document.getElementById("ask-answer");
-  const button = document.getElementById("ask-button");
+function formatTime(value) {
+  return value ? value.replace("T", " ").slice(0, 16) : "";
+}
+
+function renderAnswerHtml(text, sources) {
+  let html = escapeHtml(text);
+  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/\[(\d+)\]/g, (match, number) => {
+    const index = Number(number);
+    if (!Array.isArray(sources) || index < 1 || index > sources.length) {
+      return match;
+    }
+    return `<button type="button" class="cite" data-cite="${index}">[${index}]</button>`;
+  });
+  return html.replace(/\n/g, "<br>");
+}
+
+function renderSourcesHtml(sources) {
+  if (!Array.isArray(sources) || sources.length === 0) {
+    return "";
+  }
+
+  const chips = sources.map((source, index) => {
+    const page = source.page_number ? ` · 第${source.page_number}页` : "";
+    return `<button type="button" class="source-chip" data-cite="${index + 1}">[${index + 1}] ${escapeHtml(source.document_title)}${page}</button>`;
+  }).join("");
+
+  const snippets = sources.map((source, index) => {
+    const page = source.page_number ? ` 第${source.page_number}页` : "";
+    return `<div class="source-snippet" data-idx="${index + 1}">
+      <strong>[${index + 1}] ${escapeHtml(source.document_title)}</strong>${page}
+      <div class="meta">${escapeHtml(source.snippet || "")}</div>
+    </div>`;
+  }).join("");
+
+  return `<div class="sources">${chips}${snippets}</div>`;
+}
+
+function renderChatMessages(scrollToBottom = true) {
+  const container = document.getElementById("chat-messages");
   if (!container) {
     return;
   }
 
+  if (state.chatMessages.length === 0) {
+    container.innerHTML = '<div class="chat-empty">选择知识库，输入问题开始对话。</div>';
+    return;
+  }
+
+  container.innerHTML = state.chatMessages.map((message) => {
+    if (message.role === "user") {
+      return `<div class="msg msg-user"><div class="bubble">${escapeHtml(message.content).replace(/\n/g, "<br>")}</div></div>`;
+    }
+    if (message.pending) {
+      return '<div class="msg msg-bot"><div class="bubble pending">正在检索资料并生成回答…</div></div>';
+    }
+    const sources = Array.isArray(message.sources_json) ? message.sources_json : [];
+    return `<div class="msg msg-bot"><div class="bubble">
+      <div class="answer">${renderAnswerHtml(message.content, sources)}</div>
+      ${renderSourcesHtml(sources)}
+      <div class="meta">${message.has_evidence ? "依据检索资料生成" : "没有可用资料"}</div>
+    </div></div>`;
+  }).join("");
+
+  if (scrollToBottom) {
+    container.scrollTop = container.scrollHeight;
+  }
+}
+
+function renderSessionList() {
+  const container = document.getElementById("session-list");
+  if (!container) {
+    return;
+  }
+
+  container.innerHTML = state.chatSessions.length
+    ? state.chatSessions.map((session) => `
+        <div class="session-item ${session.id === state.currentSessionId ? "active" : ""}" data-session-id="${session.id}">
+          <div class="session-title">${escapeHtml(session.title)}</div>
+          <div class="meta">${formatTime(session.updated_at)}</div>
+          <button type="button" class="session-delete" data-delete-session="${session.id}" title="删除会话">×</button>
+        </div>
+      `).join("")
+    : '<div class="empty">还没有对话</div>';
+}
+
+async function loadChatSessions() {
+  try {
+    state.chatSessions = await apiFetch("/api/chat/sessions");
+  } catch (error) {
+    state.chatSessions = [];
+  }
+  renderSessionList();
+}
+
+async function loadChatMessages(sessionId) {
+  const messages = await apiFetch(`/api/chat/sessions/${sessionId}/messages`);
+  state.chatMessages = messages;
+
+  const session = state.chatSessions.find((item) => item.id === sessionId);
+  if (session) {
+    state.chatKbId = session.knowledge_base_id;
+    const select = document.getElementById("chat-kb");
+    if (select) {
+      select.value = String(session.knowledge_base_id);
+    }
+  }
+
+  renderChatMessages();
+  renderSessionList();
+}
+
+function startNewChat() {
+  state.currentSessionId = null;
+  state.chatMessages = [];
+  renderChatMessages();
+  renderSessionList();
+  const input = document.getElementById("chat-question");
+  if (input) {
+    input.focus();
+  }
+}
+
+async function sendChatQuestion(question) {
+  if (state.chatSending) {
+    return;
+  }
+
+  const select = document.getElementById("chat-kb");
+  const knowledgeBase = state.knowledgeBases.find(
+    (kb) => kb.id === Number(select ? select.value : 0)
+  );
+  if (!knowledgeBase) {
+    alert("请先选择知识库");
+    return;
+  }
+
+  state.chatSending = true;
+  const button = document.getElementById("chat-send");
   if (button) {
     button.disabled = true;
-    button.textContent = "生成中…";
   }
-  container.innerHTML = '<div class="empty">大模型生成中，请稍候…</div>';
+
+  state.chatMessages.push({ id: `local-user-${Date.now()}`, role: "user", content: question });
+  state.chatMessages.push({ id: "local-pending", role: "assistant", pending: true });
+  renderChatMessages();
 
   try {
     const data = await apiFetch(`/api/knowledge-bases/${knowledgeBase.id}/ask`, {
       method: "POST",
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, session_id: state.currentSessionId }),
     });
-
-    const sourcesHtml = data.sources.length
-      ? `<div class="meta">来源：${data.sources.map((source) => {
-          const location = source.page_number ? ` 第${source.page_number}页` : "";
-          return `${escapeHtml(source.document_title)}${location}`;
-        }).join("；")}</div>`
-      : "";
-
-    container.innerHTML = `
-      <div class="card">
-        <div class="title">${escapeHtml(data.answer)}</div>
-        ${sourcesHtml}
-        <div class="meta">${data.has_evidence ? "依据检索资料生成" : "没有可用资料"}</div>
-      </div>
-    `;
+    state.currentSessionId = data.session_id;
+    await loadChatSessions();
+    await loadChatMessages(data.session_id);
   } catch (error) {
-    container.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+    state.chatMessages.pop();
+    state.chatMessages.push({
+      id: `local-error-${Date.now()}`,
+      role: "assistant",
+      content: `请求失败：${error.message}`,
+      sources_json: [],
+      has_evidence: false,
+    });
+    renderChatMessages();
   } finally {
+    state.chatSending = false;
     if (button) {
       button.disabled = false;
-      button.textContent = "生成回答";
     }
   }
 }
 
-async function loadSearchResults(knowledgeBase, question) {
-  const container = document.getElementById("search-results");
-  if (!container) {
-    return;
+async function renderChat() {
+  setActiveNav("chat");
+  const view = document.getElementById("view");
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  const initialKbId = Number(params.get("kb") || 0);
+  const initialQuestion = params.get("q") || "";
+
+  view.innerHTML = `
+    <div class="chat-page">
+      <aside class="chat-sessions">
+        <div class="panel-head">
+          <h3>会话</h3>
+          <button type="button" class="secondary" id="new-chat">新对话</button>
+        </div>
+        <div id="session-list" class="session-list"><div class="empty">加载中…</div></div>
+      </aside>
+      <section class="chat-main">
+        <div class="page-head">
+          <h2>智能体问答</h2>
+          <select id="chat-kb" class="kb-select"></select>
+        </div>
+        <div id="chat-messages" class="chat-messages"></div>
+        <form id="chat-form" class="chat-input">
+          <input id="chat-question" placeholder="输入问题，Enter 发送" autocomplete="off">
+          <button type="submit" class="primary" id="chat-send">发送</button>
+        </form>
+      </section>
+    </div>
+  `;
+
+  const kbSelect = document.getElementById("chat-kb");
+  kbSelect.innerHTML = state.knowledgeBases.length
+    ? state.knowledgeBases.map((kb) => `<option value="${kb.id}">${escapeHtml(kb.name)}${kb.scope_type === "personal" ? "（个人）" : ""}</option>`).join("")
+    : '<option value="">无可用知识库</option>';
+
+  const defaultKb = state.knowledgeBases.find((kb) => kb.id === initialKbId) || state.knowledgeBases[0];
+  if (defaultKb) {
+    kbSelect.value = String(defaultKb.id);
+    state.chatKbId = defaultKb.id;
+  } else {
+    state.chatKbId = null;
   }
 
-  try {
-    const data = await apiFetch(`/api/knowledge-bases/${knowledgeBase.id}/search`, {
-      method: "POST",
-      body: JSON.stringify({ question }),
-    });
+  document.getElementById("new-chat").addEventListener("click", startNewChat);
 
-    if (!data.matches.length) {
-      container.innerHTML = '<div class="empty">没有检索到相关片段</div>';
+  kbSelect.addEventListener("change", () => {
+    state.chatKbId = Number(kbSelect.value);
+    if (state.currentSessionId) {
+      startNewChat();
+    }
+  });
+
+  document.getElementById("chat-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const input = document.getElementById("chat-question");
+    const question = input.value.trim();
+    if (!question) {
+      return;
+    }
+    input.value = "";
+    sendChatQuestion(question);
+  });
+
+  document.getElementById("chat-messages").addEventListener("click", (event) => {
+    const trigger = event.target.closest(".cite, .source-chip");
+    if (!trigger) {
+      return;
+    }
+    const bubble = trigger.closest(".bubble");
+    if (!bubble) {
+      return;
+    }
+    const snippet = bubble.querySelector(`.source-snippet[data-idx="${trigger.dataset.cite}"]`);
+    if (snippet) {
+      snippet.classList.toggle("open");
+    }
+  });
+
+  document.getElementById("session-list").addEventListener("click", async (event) => {
+    const deleteButton = event.target.closest("[data-delete-session]");
+    if (deleteButton) {
+      const sessionId = Number(deleteButton.dataset.deleteSession);
+      if (!confirm("确定删除这条会话吗？")) {
+        return;
+      }
+      try {
+        await apiFetch(`/api/chat/sessions/${sessionId}`, { method: "DELETE" });
+        if (state.currentSessionId === sessionId) {
+          state.currentSessionId = null;
+          state.chatMessages = [];
+          renderChatMessages();
+        }
+        await loadChatSessions();
+      } catch (error) {
+        alert(error.message);
+      }
       return;
     }
 
-    container.innerHTML = data.matches.map((match) => `
-      <div class="card">
-        <div class="title">
-          ${escapeHtml(match.document_title)}
-          <span class="tag">${match.page_number ? `第 ${match.page_number} 页` : `片段 ${match.chunk_index + 1}`}</span>
-          <span class="tag">相似度 ${(match.score * 100).toFixed(1)}%</span>
-        </div>
-        <div class="meta">${escapeHtml(match.content)}</div>
-      </div>
-    `).join("");
-  } catch (error) {
-    container.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+    const item = event.target.closest("[data-session-id]");
+    if (!item) {
+      return;
+    }
+    state.currentSessionId = Number(item.dataset.sessionId);
+    try {
+      await loadChatMessages(state.currentSessionId);
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+
+  await loadChatSessions();
+
+  if (initialQuestion) {
+    state.currentSessionId = null;
+    state.chatMessages = [];
+    renderChatMessages();
+    await sendChatQuestion(initialQuestion);
+  } else if (
+    state.currentSessionId &&
+    state.chatSessions.some((session) => session.id === state.currentSessionId)
+  ) {
+    await loadChatMessages(state.currentSessionId);
+  } else {
+    state.currentSessionId = null;
+    state.chatMessages = [];
+    renderChatMessages();
   }
+}
+
+async function refreshWorkspace() {
+  const [groups, knowledgeBases] = await Promise.all([
+    apiFetch("/api/groups"),
+    apiFetch("/api/knowledge-bases"),
+  ]);
+  state.groups = groups;
+  state.knowledgeBases = knowledgeBases;
+}
+
+function openModal(innerHtml, onReady) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<div class="modal">${innerHtml}</div>`;
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      close();
+    }
+  });
+
+  onReady(overlay, close);
+}
+
+function openCreateGroupModal() {
+  openModal(`
+    <h3>新建群组</h3>
+    <label>群组名称<input id="group-name" maxlength="100" placeholder="例如：研发部"></label>
+    <label>类型
+      <select id="group-type">
+        <option value="department">部门</option>
+        <option value="project">项目</option>
+        <option value="company">公司</option>
+      </select>
+    </label>
+    <label>说明（可选）<input id="group-desc" maxlength="500"></label>
+    <p class="error" id="form-error" hidden></p>
+    <div class="modal-actions">
+      <span class="spacer"></span>
+      <button type="button" class="link" id="form-cancel">取消</button>
+      <button type="button" class="primary" id="form-submit">创建</button>
+    </div>
+  `, (overlay, close) => {
+    const errorBox = overlay.querySelector("#form-error");
+
+    overlay.querySelector("#form-cancel").addEventListener("click", close);
+    overlay.querySelector("#form-submit").addEventListener("click", async () => {
+      errorBox.hidden = true;
+      const name = overlay.querySelector("#group-name").value.trim();
+      if (!name) {
+        errorBox.textContent = "群组名称不能为空";
+        errorBox.hidden = false;
+        return;
+      }
+
+      try {
+        const group = await apiFetch("/api/groups", {
+          method: "POST",
+          body: JSON.stringify({
+            name,
+            group_type: overlay.querySelector("#group-type").value,
+            description: overlay.querySelector("#group-desc").value.trim() || null,
+          }),
+        });
+        close();
+        await refreshWorkspace();
+        state.selectedGroupId = group.id;
+        const createdKb = state.knowledgeBases.find(
+          (kb) => kb.scope_type === "enterprise_group" && kb.group_id === group.id
+        );
+        state.selectedKbId = createdKb ? createdKb.id : null;
+        renderEnterprise();
+      } catch (error) {
+        errorBox.textContent = error.message;
+        errorBox.hidden = false;
+      }
+    });
+  });
+}
+
+function openCreateKnowledgeBaseModal(group) {
+  openModal(`
+    <h3>为「${escapeHtml(group.name)}」新建知识库</h3>
+    <label>知识库名称<input id="kb-name" maxlength="150" value="${escapeHtml(group.name)}知识库"></label>
+    <p class="error" id="form-error" hidden></p>
+    <div class="modal-actions">
+      <span class="spacer"></span>
+      <button type="button" class="link" id="form-cancel">取消</button>
+      <button type="button" class="primary" id="form-submit">创建</button>
+    </div>
+  `, (overlay, close) => {
+    const errorBox = overlay.querySelector("#form-error");
+
+    overlay.querySelector("#form-cancel").addEventListener("click", close);
+    overlay.querySelector("#form-submit").addEventListener("click", async () => {
+      errorBox.hidden = true;
+      const name = overlay.querySelector("#kb-name").value.trim();
+      if (!name) {
+        errorBox.textContent = "知识库名称不能为空";
+        errorBox.hidden = false;
+        return;
+      }
+
+      try {
+        const knowledgeBase = await apiFetch("/api/knowledge-bases", {
+          method: "POST",
+          body: JSON.stringify({
+            name,
+            scope_type: "enterprise_group",
+            group_id: group.id,
+          }),
+        });
+        close();
+        await refreshWorkspace();
+        state.selectedGroupId = group.id;
+        state.selectedKbId = knowledgeBase.id;
+        renderEnterprise();
+      } catch (error) {
+        errorBox.textContent = error.message;
+        errorBox.hidden = false;
+      }
+    });
+  });
+}
+
+function openCreatePersonalKbModal() {
+  openModal(`
+    <h3>新建个人知识库</h3>
+    <label>知识库名称<input id="kb-name" maxlength="150" value="我的个人知识库"></label>
+    <p class="error" id="form-error" hidden></p>
+    <div class="modal-actions">
+      <span class="spacer"></span>
+      <button type="button" class="link" id="form-cancel">取消</button>
+      <button type="button" class="primary" id="form-submit">创建</button>
+    </div>
+  `, (overlay, close) => {
+    const errorBox = overlay.querySelector("#form-error");
+
+    overlay.querySelector("#form-cancel").addEventListener("click", close);
+    overlay.querySelector("#form-submit").addEventListener("click", async () => {
+      errorBox.hidden = true;
+      const name = overlay.querySelector("#kb-name").value.trim();
+      if (!name) {
+        errorBox.textContent = "知识库名称不能为空";
+        errorBox.hidden = false;
+        return;
+      }
+
+      try {
+        const knowledgeBase = await apiFetch("/api/knowledge-bases", {
+          method: "POST",
+          body: JSON.stringify({ name, scope_type: "personal" }),
+        });
+        close();
+        await refreshWorkspace();
+        state.selectedKbId = knowledgeBase.id;
+        renderPersonal();
+      } catch (error) {
+        errorBox.textContent = error.message;
+        errorBox.hidden = false;
+      }
+    });
+  });
+}
+
+async function openMembersModal(group, onChanged) {
+  openModal(`
+    <h3>「${escapeHtml(group.name)}」成员管理</h3>
+    <div id="member-list"><div class="empty">加载中…</div></div>
+    <div class="member-add">
+      <input id="member-username" maxlength="50" placeholder="用户名（至少 2 个字符）">
+      <select id="member-role">
+        <option value="member">成员</option>
+        <option value="editor">编辑者</option>
+        <option value="admin">管理员</option>
+      </select>
+      <button type="button" class="secondary" id="member-add-btn">添加</button>
+    </div>
+    <p class="error" id="member-error" hidden></p>
+    <div class="modal-actions">
+      <span class="spacer"></span>
+      <button type="button" class="link" id="member-close">关闭</button>
+    </div>
+  `, async (overlay, close) => {
+    const listBox = overlay.querySelector("#member-list");
+    const errorBox = overlay.querySelector("#member-error");
+
+    const showError = (error) => {
+      errorBox.textContent = error.message;
+      errorBox.hidden = false;
+    };
+
+    const loadMembers = async () => {
+      const members = await apiFetch(`/api/groups/${group.id}/members`);
+      listBox.innerHTML = members.length
+        ? members.map((member) => `
+            <div class="member-row">
+              <span class="member-name">${escapeHtml(member.username)}</span>
+              <select data-role-select="${member.user_id}">
+                ${["member", "editor", "admin"].map((role) => `
+                  <option value="${role}" ${role === member.role ? "selected" : ""}>${roleLabel(role)}</option>
+                `).join("")}
+              </select>
+              <button type="button" class="danger" data-remove="${member.user_id}">移除</button>
+            </div>
+          `).join("")
+        : '<div class="empty">暂无成员</div>';
+    };
+
+    overlay.querySelector("#member-close").addEventListener("click", close);
+
+    overlay.querySelector("#member-add-btn").addEventListener("click", async () => {
+      errorBox.hidden = true;
+      const username = overlay.querySelector("#member-username").value.trim();
+      if (!username) {
+        return;
+      }
+      try {
+        await apiFetch(`/api/groups/${group.id}/members`, {
+          method: "POST",
+          body: JSON.stringify({
+            username,
+            role: overlay.querySelector("#member-role").value,
+          }),
+        });
+        overlay.querySelector("#member-username").value = "";
+        await loadMembers();
+        if (onChanged) {
+          onChanged();
+        }
+      } catch (error) {
+        showError(error);
+      }
+    });
+
+    listBox.addEventListener("change", async (event) => {
+      const select = event.target.closest("[data-role-select]");
+      if (!select) {
+        return;
+      }
+      errorBox.hidden = true;
+      try {
+        await apiFetch(`/api/groups/${group.id}/members/${select.dataset.roleSelect}`, {
+          method: "PATCH",
+          body: JSON.stringify({ role: select.value }),
+        });
+        if (onChanged) {
+          onChanged();
+        }
+      } catch (error) {
+        showError(error);
+        await loadMembers();
+      }
+    });
+
+    listBox.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-remove]");
+      if (!button) {
+        return;
+      }
+      if (!confirm("确定移除该成员吗？")) {
+        return;
+      }
+      errorBox.hidden = true;
+      try {
+        await apiFetch(`/api/groups/${group.id}/members/${button.dataset.remove}`, {
+          method: "DELETE",
+        });
+        await loadMembers();
+        if (onChanged) {
+          onChanged();
+        }
+      } catch (error) {
+        showError(error);
+      }
+    });
+
+    try {
+      await loadMembers();
+    } catch (error) {
+      showError(error);
+    }
+  });
 }
 
 init();

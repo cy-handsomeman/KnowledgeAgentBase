@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -12,6 +14,7 @@ class SourceOut(BaseModel):
     chunk_id: int
     page_number: int | None
     score: float
+    snippet: str
 
 
 class AskResponse(BaseModel):
@@ -19,3 +22,4 @@ class AskResponse(BaseModel):
     answer: str
     sources: list[SourceOut]
     has_evidence: bool
+    created_at: datetime
