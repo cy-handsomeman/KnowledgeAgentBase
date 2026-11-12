@@ -395,7 +395,8 @@ async function loadDocuments(knowledgeBase) {
 
     if (editable) {
       const uploadInput = panel.querySelector("#upload-input");
-      panel.querySelector("#upload-doc").addEventListener("click", () => uploadInput.click());
+      const uploadButton = panel.querySelector("#upload-doc");
+      uploadButton.addEventListener("click", () => uploadInput.click());
       uploadInput.addEventListener("change", async () => {
         const file = uploadInput.files[0];
         if (!file) {
@@ -403,6 +404,9 @@ async function loadDocuments(knowledgeBase) {
         }
         const form = new FormData();
         form.append("file", file);
+        uploadButton.disabled = true;
+        uploadButton.textContent = "解析中…";
+        showToast("文件已上传，正在解析并建立索引，请稍候…", "info");
         try {
           const uploaded = await apiFetch(`/api/knowledge-bases/${knowledgeBase.id}/documents/upload`, {
             method: "POST",
@@ -417,6 +421,8 @@ async function loadDocuments(knowledgeBase) {
           showToast(error.message, "error");
         } finally {
           uploadInput.value = "";
+          uploadButton.disabled = false;
+          uploadButton.textContent = "上传 PDF/TXT";
         }
       });
 
@@ -509,6 +515,41 @@ function renderMarkdownPreview(text) {
   return html.replace(/\n/g, "<br>");
 }
 
+function documentErrorInfo(message) {
+  const text = String(message || "");
+  if (text.includes("重建索引失败，已保留旧索引")) {
+    return { summary: "最近一次重建索引失败，当前仍在使用旧索引。", detail: text };
+  }
+  if (text.includes("没有可索引的文本内容")) {
+    return { summary: "文档里没有可用文字，可能是扫描件或空文件。", detail: text };
+  }
+  if (text.includes("超过 10MB")) {
+    return { summary: "文件超过 10MB 限制。", detail: text };
+  }
+  if (/pdf/i.test(text) && /(无法|失败|损坏|open|corrupt|encrypted|invalid)/i.test(text)) {
+    return { summary: "PDF 文件损坏或无法解析。", detail: text };
+  }
+  return { summary: text.split("\n")[0].slice(0, 80) || "处理失败", detail: text };
+}
+
+function renderDocumentError(errorBox, documentData) {
+  if (!documentData || !documentData.error_message) {
+    errorBox.hidden = true;
+    return;
+  }
+  const { summary, detail } = documentErrorInfo(documentData.error_message);
+  const failed = documentData.status === "FAILED";
+  errorBox.classList.add("inline-feedback");
+  if (!failed) {
+    errorBox.classList.add("warn");
+  }
+  errorBox.innerHTML = `
+    <div>${failed ? "处理失败" : "提示"}：${escapeHtml(summary)}</div>
+    <details><summary>技术详情</summary><pre>${escapeHtml(detail)}</pre></details>
+  `;
+  errorBox.hidden = false;
+}
+
 function openUploadedViewer(overlay, knowledgeBase, documentData, editable) {
   overlay.innerHTML = `
     <div class="modal modal-wide">
@@ -527,10 +568,7 @@ function openUploadedViewer(overlay, knowledgeBase, documentData, editable) {
 
   const container = overlay.querySelector("#doc-preview");
   const errorBox = overlay.querySelector("#doc-error");
-  if (documentData.status === "FAILED" && documentData.error_message) {
-    errorBox.textContent = `处理失败：${documentData.error_message}`;
-    errorBox.hidden = false;
-  }
+  renderDocumentError(errorBox, documentData);
   const downloadButton = overlay.querySelector("#doc-download");
   let objectUrl = null;
 
@@ -618,10 +656,8 @@ function openTextEditor(overlay, knowledgeBase, documentData, editable, isNew) {
   const togglePreview = overlay.querySelector("#doc-toggle-preview");
   const errorBox = overlay.querySelector("#doc-error");
 
-  if (documentData?.status === "FAILED" && documentData.error_message) {
-    errorBox.textContent = `处理失败：${documentData.error_message}`;
-    errorBox.classList.add("inline-feedback");
-    errorBox.hidden = false;
+  if (documentData) {
+    renderDocumentError(errorBox, documentData);
   }
 
   titleInput.value = documentData ? documentData.title : "";

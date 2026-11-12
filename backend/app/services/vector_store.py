@@ -37,6 +37,12 @@ def delete_document_vectors(document_id: int) -> None:
     _get_collection().delete(where={"document_id": document_id})
 
 
+def delete_vector_ids(vector_ids: list[str]) -> None:
+    if not vector_ids:
+        return
+    _get_collection().delete(ids=vector_ids)
+
+
 def count_vectors() -> int:
     return _get_collection().count()
 

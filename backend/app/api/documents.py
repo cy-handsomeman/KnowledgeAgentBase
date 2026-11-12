@@ -2,6 +2,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -160,7 +161,8 @@ async def upload_document(
         target.unlink(missing_ok=True)
         raise
     db.refresh(document)
-    index_document(db, document)
+    # 解析与向量化是 CPU 密集操作，放到线程池执行，避免阻塞事件循环。
+    await run_in_threadpool(index_document, db, document)
     db.refresh(document)
     return document
 
@@ -222,14 +224,15 @@ def update_document(
     document = _get_document_or_404(db, document_id)
     if payload.title is not None:
         document.title = payload.title
-    if payload.content is not None:
-        document.content = payload.content
-
-    db.commit()
-    db.refresh(document)
-    if payload.content is not None:
-        index_document(db, document)
+    if payload.content is None:
+        db.commit()
         db.refresh(document)
+        return document
+
+    # 正文与索引在同一个事务里提交：重建失败时正文也不生效，旧索引保持可用。
+    document.content = payload.content
+    index_document(db, document)
+    db.refresh(document)
     return document
 
 

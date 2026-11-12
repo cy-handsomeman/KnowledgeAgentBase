@@ -107,6 +107,39 @@ def test_upload_requires_edit_permission(client, make_user, make_group, add_memb
     assert response.status_code == 403
 
 
+def test_failed_reindex_keeps_previous_index(client, make_user, make_group):
+    owner = make_user("owner")
+    _, knowledge_base_id = make_group("索引保护部", owner["id"])
+
+    created = client.post(
+        f"/api/knowledge-bases/{knowledge_base_id}/documents",
+        headers=owner["headers"],
+        json={"title": "住宿制度", "content": "住宿标准 600 元。"},
+    )
+    document = created.json()
+
+    failed = client.put(
+        f"/api/documents/{document['id']}",
+        headers=owner["headers"],
+        json={"content": "   "},
+    )
+    assert failed.status_code == 200
+    body = failed.json()
+    assert body["status"] == "READY"
+    assert "重建索引失败" in body["error_message"]
+    assert body["content"] == "住宿标准 600 元。"
+
+    search = client.post(
+        f"/api/knowledge-bases/{knowledge_base_id}/search",
+        headers=owner["headers"],
+        json={"question": "住宿标准是多少"},
+    )
+    assert search.status_code == 200
+    matches = search.json()["matches"]
+    assert matches
+    assert "600" in matches[0]["content"]
+
+
 def test_corrupt_pdf_marks_failed(client, make_user, make_group):
     owner = make_user("owner")
     _, knowledge_base_id = make_group("损坏文档部", owner["id"])

@@ -504,6 +504,34 @@ button:disabled {
   font-size: 13px;
 }
 
+.inline-feedback.warn {
+  background: #fff9e8;
+  color: #8a6212;
+}
+
+.inline-feedback details {
+  margin-top: 6px;
+}
+
+.inline-feedback summary {
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.inline-feedback pre {
+  margin: 6px 0 0;
+  padding: 8px;
+  max-height: 160px;
+  overflow: auto;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.04);
+  color: inherit;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .modal-overlay {
   position: fixed;
   z-index: 10;
