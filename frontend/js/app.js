@@ -31,6 +31,51 @@ function roleLabel(role) {
   return ROLE_LABELS[role] || role;
 }
 
+function showToast(message, tone = "info") {
+  let toast = document.getElementById("app-toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "app-toast";
+    toast.className = "toast";
+    toast.setAttribute("role", "status");
+    toast.setAttribute("aria-live", "polite");
+    document.body.appendChild(toast);
+  }
+  toast.dataset.tone = tone;
+  toast.textContent = message;
+  toast.classList.add("show");
+  window.clearTimeout(showToast.timeout);
+  showToast.timeout = window.setTimeout(() => toast.classList.remove("show"), 2800);
+}
+
+function documentStatus(status) {
+  const values = {
+    READY: ["已就绪", "ready"],
+    PROCESSING: ["处理中", "processing"],
+    FAILED: ["处理失败", "failed"],
+    UPLOADED: ["待处理", "processing"],
+  };
+  return values[status] || [status || "未知状态", "processing"];
+}
+
+function updateChatScope(knowledgeBaseId) {
+  const knowledgeBase = state.knowledgeBases.find((item) => item.id === Number(knowledgeBaseId));
+  const select = document.getElementById("chat-kb");
+  const notice = document.getElementById("chat-scope");
+  if (!knowledgeBase || !notice) {
+    return;
+  }
+  state.chatKbId = knowledgeBase.id;
+  if (select) {
+    select.value = String(knowledgeBase.id);
+  }
+  const group = state.groups.find((item) => item.id === knowledgeBase.group_id);
+  const scopeLabel = knowledgeBase.scope_type === "personal"
+    ? "个人知识库 · 仅自己可见"
+    : `${group ? group.name : "企业群组"} · 仅对群组成员开放`;
+  notice.innerHTML = `<span aria-hidden="true">◈</span><span>当前仅检索：</span><strong>${escapeHtml(knowledgeBase.name)}</strong><span>· ${escapeHtml(scopeLabel)}</span>`;
+}
+
 function setActiveNav(name) {
   document.querySelectorAll("[data-nav]").forEach((link) => {
     link.classList.toggle("active", link.dataset.nav === name);
@@ -92,7 +137,7 @@ function renderEnterprise() {
 
   if (state.groups.length === 0) {
     view.innerHTML = `
-      <div class="page-head"><h2>企业知识库</h2></div>
+      <div class="page-head"><div><p class="eyebrow">共享知识空间</p><h2>企业知识库</h2><p class="muted">按群组查阅文档，并在授权范围内提问。</p></div></div>
       <div class="panel">
         <div class="panel-head">
           <h3>我的群组</h3>
@@ -117,12 +162,14 @@ function renderEnterprise() {
 
   view.innerHTML = `
     <div class="page-head">
-      <h2>企业知识库</h2>
-      <div class="search-bar">
-        <input id="ai-question" placeholder="在当前知识库中提问…">
-        <button class="primary" id="ai-search">AI 搜索</button>
-      </div>
+      <div><p class="eyebrow">共享知识空间</p><h2>企业知识库</h2><p class="muted">选择群组和知识库后，可查看文档或直接提问。</p></div>
+      <form class="search-bar" id="ai-search-form">
+        <input id="ai-question" aria-label="在当前知识库中提问" placeholder="搜索文档内容，或直接提问…" autocomplete="off">
+        <button class="primary" id="ai-search" type="submit">提问</button>
+      </form>
     </div>
+
+    <div class="scope-notice"><span aria-hidden="true">◈</span><span>当前检索范围：</span><strong>${escapeHtml(group.name)}${selectedKb ? ` · ${escapeHtml(selectedKb.name)}` : ""}</strong><span>仅包含你有权访问的资料</span></div>
 
     <div class="panel">
       <div class="panel-head">
@@ -131,7 +178,7 @@ function renderEnterprise() {
       </div>
       <div class="card-list">
         ${state.groups.map((item) => `
-          <div class="card ${item.id === group.id ? "selected" : ""}" data-group-id="${item.id}">
+          <div class="card ${item.id === group.id ? "selected" : ""}" data-group-id="${item.id}" role="button" tabindex="0" aria-pressed="${item.id === group.id}">
             <div class="title">${escapeHtml(item.name)}<span class="tag">${roleLabel(item.role)}</span></div>
             <div class="meta">${escapeHtml(item.group_type)}${item.description ? " · " + escapeHtml(item.description) : ""}</div>
           </div>
@@ -149,7 +196,7 @@ function renderEnterprise() {
       </div>
       <div class="card-list">
         ${groupBases.length ? groupBases.map((kb) => `
-          <div class="card ${kb.id === state.selectedKbId ? "selected" : ""}" data-kb-id="${kb.id}">
+          <div class="card ${kb.id === state.selectedKbId ? "selected" : ""}" data-kb-id="${kb.id}" role="button" tabindex="0" aria-pressed="${kb.id === state.selectedKbId}">
             <div class="title">${escapeHtml(kb.name)}</div>
             <div class="meta">企业知识库 · 创建于 ${kb.created_at.slice(0, 10)}</div>
           </div>
@@ -161,29 +208,44 @@ function renderEnterprise() {
   `;
 
   view.querySelectorAll("[data-group-id]").forEach((card) => {
-    card.addEventListener("click", () => {
+    const selectGroup = () => {
       state.selectedGroupId = Number(card.dataset.groupId);
       state.selectedKbId = null;
       renderEnterprise();
+    };
+    card.addEventListener("click", selectGroup);
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectGroup();
+      }
     });
   });
 
   view.querySelectorAll("[data-kb-id]").forEach((card) => {
-    card.addEventListener("click", () => {
+    const selectKnowledgeBase = () => {
       state.selectedKbId = Number(card.dataset.kbId);
       renderEnterprise();
+    };
+    card.addEventListener("click", selectKnowledgeBase);
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectKnowledgeBase();
+      }
     });
   });
 
-  document.getElementById("ai-search").addEventListener("click", () => {
+  document.getElementById("ai-search-form").addEventListener("submit", (event) => {
+    event.preventDefault();
     const question = document.getElementById("ai-question").value.trim();
     const knowledgeBase = groupBases.find((kb) => kb.id === state.selectedKbId) || groupBases[0];
     if (!question) {
-      alert("请输入问题");
+      showToast("请输入问题后再提问", "error");
       return;
     }
     if (!knowledgeBase) {
-      alert("该群组还没有知识库，无法搜索");
+      showToast("该群组还没有知识库，暂时无法提问", "error");
       return;
     }
     location.hash = `#/chat?kb=${knowledgeBase.id}&q=${encodeURIComponent(question)}`;
@@ -222,12 +284,14 @@ function renderPersonal() {
 
   view.innerHTML = `
     <div class="page-head">
-      <h2>个人知识库</h2>
-      <div class="search-bar">
-        <input id="ai-question" placeholder="在我的知识库中提问…">
-        <button class="primary" id="ai-search">AI 搜索</button>
-      </div>
+      <div><p class="eyebrow">私人知识空间</p><h2>个人知识库</h2><p class="muted">整理个人文档，并只在自己的资料中搜索和提问。</p></div>
+      <form class="search-bar" id="ai-search-form">
+        <input id="ai-question" aria-label="在个人知识库中提问" placeholder="搜索我的文档，或直接提问…" autocomplete="off">
+        <button class="primary" id="ai-search" type="submit">提问</button>
+      </form>
     </div>
+
+    <div class="scope-notice"><span aria-hidden="true">◈</span><span>当前检索范围：</span><strong>${selectedKb ? escapeHtml(selectedKb.name) : "个人知识库"}</strong><span>仅自己可见</span></div>
 
     <div class="panel">
       <div class="panel-head">
@@ -236,7 +300,7 @@ function renderPersonal() {
       </div>
       <div class="card-list">
         ${personalBases.length ? personalBases.map((kb) => `
-          <div class="card ${kb.id === state.selectedKbId ? "selected" : ""}" data-kb-id="${kb.id}">
+          <div class="card ${kb.id === state.selectedKbId ? "selected" : ""}" data-kb-id="${kb.id}" role="button" tabindex="0" aria-pressed="${kb.id === state.selectedKbId}">
             <div class="title">${escapeHtml(kb.name)}</div>
             <div class="meta">个人知识库 · 仅自己可见 · 创建于 ${kb.created_at.slice(0, 10)}</div>
           </div>
@@ -248,21 +312,29 @@ function renderPersonal() {
   `;
 
   view.querySelectorAll("[data-kb-id]").forEach((card) => {
-    card.addEventListener("click", () => {
+    const selectKnowledgeBase = () => {
       state.selectedKbId = Number(card.dataset.kbId);
       renderPersonal();
+    };
+    card.addEventListener("click", selectKnowledgeBase);
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectKnowledgeBase();
+      }
     });
   });
 
-  document.getElementById("ai-search").addEventListener("click", () => {
+  document.getElementById("ai-search-form").addEventListener("submit", (event) => {
+    event.preventDefault();
     const question = document.getElementById("ai-question").value.trim();
     const knowledgeBase = personalBases.find((kb) => kb.id === state.selectedKbId) || personalBases[0];
     if (!question) {
-      alert("请输入问题");
+      showToast("请输入问题后再提问", "error");
       return;
     }
     if (!knowledgeBase) {
-      alert("你还没有个人知识库，无法搜索");
+      showToast("请先创建个人知识库，再开始提问", "error");
       return;
     }
     location.hash = `#/chat?kb=${knowledgeBase.id}&q=${encodeURIComponent(question)}`;
@@ -291,12 +363,20 @@ async function loadDocuments(knowledgeBase) {
   try {
     const documents = await apiFetch(`/api/knowledge-bases/${knowledgeBase.id}/documents`);
     const listHtml = documents.length
-      ? documents.map((doc) => `
-          <div class="card" data-doc-id="${doc.id}">
-            <div class="title">${escapeHtml(doc.title)}<span class="tag">${escapeHtml(doc.status)}</span></div>
-            <div class="meta">${escapeHtml(doc.file_type)} · 更新于 ${escapeHtml(doc.updated_at.replace("T", " ").slice(0, 16))}</div>
+      ? documents.map((doc) => {
+          const [statusText, statusClass] = documentStatus(doc.status);
+          const fileType = String(doc.file_type || "").toUpperCase();
+          return `
+          <div class="card document-card" data-doc-id="${doc.id}" role="button" tabindex="0" aria-label="打开文档：${escapeHtml(doc.title)}">
+            <div class="doc-row">
+              <span class="file-icon ${fileType === "MARKDOWN" ? "md" : ""}" aria-hidden="true">${escapeHtml(fileType.slice(0, 4))}</span>
+              <div class="doc-copy"><div class="title">${escapeHtml(doc.title)}</div><div class="meta">更新于 ${escapeHtml(doc.updated_at.replace("T", " ").slice(0, 16))}</div></div>
+              <span class="doc-status ${statusClass}"><i class="status-dot"></i>${escapeHtml(statusText)}</span>
+              ${editable && doc.status === "FAILED" ? `<button type="button" class="secondary btn-sm" data-reindex-id="${doc.id}">重建索引</button>` : ""}
+            </div>
           </div>
-        `).join("")
+        `;
+        }).join("")
       : '<div class="empty">这个知识库还没有文档</div>';
 
     panel.innerHTML = `
@@ -304,8 +384,8 @@ async function loadDocuments(knowledgeBase) {
         <h3>${escapeHtml(knowledgeBase.name)} 的文档</h3>
         ${editable ? `
           <div class="actions">
-            <button class="secondary" id="upload-doc">上传 PDF/TXT</button>
-            <button class="primary" id="new-doc">新建文档</button>
+            <button type="button" class="secondary" id="upload-doc">上传 PDF/TXT</button>
+            <button type="button" class="primary" id="new-doc">新建文档</button>
             <input type="file" id="upload-input" accept=".pdf,.txt" hidden>
           </div>
         ` : ""}
@@ -324,13 +404,19 @@ async function loadDocuments(knowledgeBase) {
         const form = new FormData();
         form.append("file", file);
         try {
-          await apiFetch(`/api/knowledge-bases/${knowledgeBase.id}/documents/upload`, {
+          const uploaded = await apiFetch(`/api/knowledge-bases/${knowledgeBase.id}/documents/upload`, {
             method: "POST",
             body: form,
           });
-          loadDocuments(knowledgeBase);
+          showToast(
+            uploaded.status === "FAILED" ? "文档已上传，但解析失败；打开文档查看原因" : "文档已上传并完成处理",
+            uploaded.status === "FAILED" ? "error" : "success",
+          );
+          await loadDocuments(knowledgeBase);
         } catch (error) {
-          alert(error.message);
+          showToast(error.message, "error");
+        } finally {
+          uploadInput.value = "";
         }
       });
 
@@ -340,12 +426,41 @@ async function loadDocuments(knowledgeBase) {
     }
 
     panel.querySelectorAll("[data-doc-id]").forEach((card) => {
-      card.addEventListener("click", async () => {
+      const openDocument = async () => {
         try {
           const documentData = await apiFetch(`/api/documents/${card.dataset.docId}`);
           openDocumentEditor(knowledgeBase, documentData);
         } catch (error) {
-          alert(error.message);
+          showToast(error.message, "error");
+        }
+      };
+      card.addEventListener("click", openDocument);
+      card.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openDocument();
+        }
+      });
+    });
+
+    panel.querySelectorAll("[data-reindex-id]").forEach((button) => {
+      button.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        button.disabled = true;
+        button.textContent = "处理中…";
+        try {
+          const result = await apiFetch(`/api/documents/${button.dataset.reindexId}/reindex`, {
+            method: "POST",
+          });
+          showToast(
+            result.status === "READY" ? "索引已重建" : "重建失败，请打开文档查看原因",
+            result.status === "READY" ? "success" : "error",
+          );
+          await loadDocuments(knowledgeBase);
+        } catch (error) {
+          button.disabled = false;
+          button.textContent = "重建索引";
+          showToast(error.message, "error");
         }
       });
     });
@@ -412,6 +527,10 @@ function openUploadedViewer(overlay, knowledgeBase, documentData, editable) {
 
   const container = overlay.querySelector("#doc-preview");
   const errorBox = overlay.querySelector("#doc-error");
+  if (documentData.status === "FAILED" && documentData.error_message) {
+    errorBox.textContent = `处理失败：${documentData.error_message}`;
+    errorBox.hidden = false;
+  }
   const downloadButton = overlay.querySelector("#doc-download");
   let objectUrl = null;
 
@@ -498,6 +617,12 @@ function openTextEditor(overlay, knowledgeBase, documentData, editable, isNew) {
   const previewBox = overlay.querySelector("#doc-preview");
   const togglePreview = overlay.querySelector("#doc-toggle-preview");
   const errorBox = overlay.querySelector("#doc-error");
+
+  if (documentData?.status === "FAILED" && documentData.error_message) {
+    errorBox.textContent = `处理失败：${documentData.error_message}`;
+    errorBox.classList.add("inline-feedback");
+    errorBox.hidden = false;
+  }
 
   titleInput.value = documentData ? documentData.title : "";
   contentInput.value = documentData ? documentData.content || "" : "";
@@ -671,13 +796,28 @@ function renderSessionList() {
 
   container.innerHTML = state.chatSessions.length
     ? state.chatSessions.map((session) => `
-        <div class="session-item ${session.id === state.currentSessionId ? "active" : ""}" data-session-id="${session.id}">
+        <div class="session-item ${session.id === state.currentSessionId ? "active" : ""}" data-session-id="${session.id}" role="button" tabindex="0" aria-current="${session.id === state.currentSessionId ? "true" : "false"}">
           <div class="session-title">${escapeHtml(session.title)}</div>
+          <div class="session-scope">${escapeHtml(sessionScopeLabel(session))}</div>
           <div class="meta">${formatTime(session.updated_at)}</div>
-          <button type="button" class="session-delete" data-delete-session="${session.id}" title="删除会话">×</button>
+          <button type="button" class="session-delete" data-delete-session="${session.id}" title="删除会话" aria-label="删除会话：${escapeHtml(session.title)}">×</button>
         </div>
       `).join("")
     : '<div class="empty">还没有对话</div>';
+}
+
+function sessionScopeLabel(session) {
+  const knowledgeBase = state.knowledgeBases.find(
+    (item) => item.id === session.knowledge_base_id,
+  );
+  if (!knowledgeBase) {
+    return session.scope_type === "personal" ? "个人知识库" : "企业知识库";
+  }
+  if (knowledgeBase.scope_type === "personal") {
+    return `个人 · ${knowledgeBase.name}`;
+  }
+  const group = state.groups.find((item) => item.id === knowledgeBase.group_id);
+  return `${group ? group.name : "企业"} · ${knowledgeBase.name}`;
 }
 
 async function loadChatSessions() {
@@ -695,11 +835,7 @@ async function loadChatMessages(sessionId) {
 
   const session = state.chatSessions.find((item) => item.id === sessionId);
   if (session) {
-    state.chatKbId = session.knowledge_base_id;
-    const select = document.getElementById("chat-kb");
-    if (select) {
-      select.value = String(session.knowledge_base_id);
-    }
+    updateChatScope(session.knowledge_base_id);
   }
 
   renderChatMessages();
@@ -727,7 +863,7 @@ async function sendChatQuestion(question) {
     (kb) => kb.id === Number(select ? select.value : 0)
   );
   if (!knowledgeBase) {
-    alert("请先选择知识库");
+    showToast("请先选择一个可用的知识库", "error");
     return;
   }
 
@@ -785,12 +921,13 @@ async function renderChat() {
       </aside>
       <section class="chat-main">
         <div class="page-head">
-          <h2>智能体问答</h2>
-          <select id="chat-kb" class="kb-select"></select>
+          <div><p class="eyebrow">基于授权资料回答</p><h2>知识库问答</h2><p class="muted">答案会附上检索来源；资料不足时会明确说明。</p></div>
+          <label class="scope-picker">检索范围<select id="chat-kb" class="kb-select" aria-label="选择问答知识库"></select></label>
         </div>
-        <div id="chat-messages" class="chat-messages"></div>
+        <div class="scope-notice" id="chat-scope" aria-live="polite"></div>
+        <div id="chat-messages" class="chat-messages" aria-live="polite" aria-relevant="additions text"></div>
         <form id="chat-form" class="chat-input">
-          <input id="chat-question" placeholder="输入问题，Enter 发送" autocomplete="off">
+          <input id="chat-question" aria-label="输入问题" placeholder="输入问题，Enter 发送" autocomplete="off">
           <button type="submit" class="primary" id="chat-send">发送</button>
         </form>
       </section>
@@ -799,15 +936,29 @@ async function renderChat() {
 
   const kbSelect = document.getElementById("chat-kb");
   kbSelect.innerHTML = state.knowledgeBases.length
-    ? state.knowledgeBases.map((kb) => `<option value="${kb.id}">${escapeHtml(kb.name)}${kb.scope_type === "personal" ? "（个人）" : ""}</option>`).join("")
+    ? state.knowledgeBases.map((kb) => {
+      const group = state.groups.find((item) => item.id === kb.group_id);
+      const scopeName = kb.scope_type === "personal" ? "个人" : (group ? group.name : "企业");
+      return `<option value="${kb.id}">${escapeHtml(scopeName)} · ${escapeHtml(kb.name)}</option>`;
+    }).join("")
     : '<option value="">无可用知识库</option>';
 
-  const defaultKb = state.knowledgeBases.find((kb) => kb.id === initialKbId) || state.knowledgeBases[0];
+  const requestedKb = state.knowledgeBases.find((kb) => kb.id === initialKbId);
+  const defaultKb = initialKbId ? requestedKb : state.knowledgeBases[0];
+  if (initialKbId && !requestedKb) {
+    kbSelect.insertAdjacentHTML("afterbegin", '<option value="">原知识库不可用</option>');
+    kbSelect.value = "";
+  }
   if (defaultKb) {
-    kbSelect.value = String(defaultKb.id);
-    state.chatKbId = defaultKb.id;
+    updateChatScope(defaultKb.id);
   } else {
     state.chatKbId = null;
+    document.getElementById("chat-scope").textContent = initialKbId
+      ? "原检索范围当前不可用，请重新选择一个你有权访问的知识库。"
+      : "请先创建或加入知识库，再开始提问。";
+    if (initialQuestion) {
+      showToast("原检索范围当前不可用，问题未发送", "error");
+    }
   }
 
   document.getElementById("new-chat").addEventListener("click", startNewChat);
@@ -817,6 +968,7 @@ async function renderChat() {
     if (state.currentSessionId) {
       startNewChat();
     }
+    updateChatScope(state.chatKbId);
   });
 
   document.getElementById("chat-form").addEventListener("submit", (event) => {
@@ -861,7 +1013,7 @@ async function renderChat() {
         }
         await loadChatSessions();
       } catch (error) {
-        alert(error.message);
+        showToast(error.message, "error");
       }
       return;
     }
@@ -874,16 +1026,33 @@ async function renderChat() {
     try {
       await loadChatMessages(state.currentSessionId);
     } catch (error) {
-      alert(error.message);
+      showToast(error.message, "error");
+    }
+  });
+
+  document.getElementById("session-list").addEventListener("keydown", (event) => {
+    const item = event.target.closest("[data-session-id]");
+    if (
+      item &&
+      !event.target.closest("[data-delete-session]") &&
+      (event.key === "Enter" || event.key === " ")
+    ) {
+      event.preventDefault();
+      item.click();
     }
   });
 
   await loadChatSessions();
 
-  if (initialQuestion) {
+  if (initialQuestion && initialKbId && !requestedKb) {
     state.currentSessionId = null;
     state.chatMessages = [];
     renderChatMessages();
+  } else if (initialQuestion) {
+    state.currentSessionId = null;
+    state.chatMessages = [];
+    renderChatMessages();
+    history.replaceState(null, "", `${location.pathname}#/chat?kb=${defaultKb.id}`);
     await sendChatQuestion(initialQuestion);
   } else if (
     state.currentSessionId &&

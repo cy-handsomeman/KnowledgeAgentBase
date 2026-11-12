@@ -7,6 +7,7 @@ from db.session import get_db
 from models.chat import ChatMessage, ChatSession
 from models.user import User
 from schemas.chat import ChatMessageOut, ChatSessionOut
+from services.permissions import can_access_knowledge_base
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -26,11 +27,18 @@ def list_sessions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return db.scalars(
+    sessions = db.scalars(
         select(ChatSession)
         .where(ChatSession.user_id == current_user.id)
         .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
     ).all()
+    return [
+        session
+        for session in sessions
+        if can_access_knowledge_base(
+            db, current_user.id, session.knowledge_base_id
+        )
+    ]
 
 
 @router.get("/sessions/{session_id}/messages", response_model=list[ChatMessageOut])
@@ -40,6 +48,13 @@ def list_messages(
     db: Session = Depends(get_db),
 ):
     chat_session = _get_own_session(db, current_user.id, session_id)
+    if not can_access_knowledge_base(
+        db, current_user.id, chat_session.knowledge_base_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="会话不存在或无权访问",
+        )
     return db.scalars(
         select(ChatMessage)
         .where(ChatMessage.session_id == chat_session.id)

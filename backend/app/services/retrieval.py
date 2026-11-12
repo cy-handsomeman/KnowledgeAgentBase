@@ -38,7 +38,9 @@ def retrieve_matches(
             continue
 
         distance = float(item["distance"])
-        score = max(-1.0, min(1.0, 1 - distance * distance / 2))
+        # Embeddings are unit-normalized and Chroma's default L2 distance is
+        # squared Euclidean distance, so cosine similarity is 1 - distance / 2.
+        score = max(0.0, min(1.0, 1 - distance / 2))
 
         matches.append(
             SearchMatch(

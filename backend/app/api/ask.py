@@ -89,18 +89,22 @@ def ask_knowledge_base(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=str(error),
             )
-        answer, has_evidence = parse_answer(raw_answer, bool(matches))
-        sources = [
-            SourceOut(
-                document_id=match.document_id,
-                document_title=match.document_title,
-                chunk_id=match.chunk_id,
-                page_number=match.page_number,
-                score=match.score,
-                snippet=match.content[:200],
-            )
-            for match in matches
-        ]
+        answer, has_evidence = parse_answer(raw_answer, len(matches))
+        sources = (
+            [
+                SourceOut(
+                    document_id=match.document_id,
+                    document_title=match.document_title,
+                    chunk_id=match.chunk_id,
+                    page_number=match.page_number,
+                    score=match.score,
+                    snippet=match.content[:200],
+                )
+                for match in matches
+            ]
+            if has_evidence
+            else []
+        )
     else:
         answer = "根据现有资料无法回答。"
         sources = []

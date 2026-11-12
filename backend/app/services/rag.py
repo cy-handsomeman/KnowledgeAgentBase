@@ -1,4 +1,7 @@
 import json
+import re
+
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
 
 from schemas.search import SearchMatch
 
@@ -14,6 +17,14 @@ SYSTEM_PROMPT = """你是企业知识库问答助手，必须严格遵守以下�
 
 HISTORY_MESSAGE_LIMIT = 6
 HISTORY_CONTENT_LIMIT = 800
+NO_EVIDENCE_ANSWER = "根据现有资料无法回答。"
+
+
+class ModelAnswer(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    answer: str = Field(min_length=1)
+    has_evidence: StrictBool
 
 
 def build_messages(
@@ -48,21 +59,28 @@ def build_messages(
     return messages
 
 
-def parse_answer(raw: str, fallback_evidence: bool) -> tuple[str, bool]:
+def parse_answer(raw: str, source_count: int) -> tuple[str, bool]:
     text = raw.strip()
     if text.startswith("```"):
         parts = text.split("```")
         if len(parts) >= 2:
             text = parts[1]
-        if text.startswith("json"):
-            text = text[4:]
+        text = re.sub(r"^json\s*", "", text, flags=re.IGNORECASE)
     text = text.strip()
 
     try:
-        data = json.loads(text)
-        answer = str(data.get("answer", "")).strip()
-        if not answer:
-            raise ValueError("empty answer")
-        return answer, bool(data.get("has_evidence", fallback_evidence))
-    except (json.JSONDecodeError, ValueError):
-        return raw.strip(), fallback_evidence
+        data = ModelAnswer.model_validate(json.loads(text))
+    except (json.JSONDecodeError, ValidationError, TypeError, ValueError):
+        return NO_EVIDENCE_ANSWER, False
+
+    answer = data.answer.strip()
+    if not answer or not data.has_evidence:
+        return NO_EVIDENCE_ANSWER, False
+
+    citation_numbers = [int(number) for number in re.findall(r"\[(\d+)\]", answer)]
+    if not citation_numbers or any(
+        number < 1 or number > source_count for number in citation_numbers
+    ):
+        return NO_EVIDENCE_ANSWER, False
+
+    return answer, True
