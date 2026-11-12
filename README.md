@@ -211,7 +211,9 @@ D:\1mywork\AgentSpace
 │   └── main.py         # 应用入口
 ├── frontend\           # 原生 HTML/CSS/JS（由 FastAPI 托管）
 ├── migrations\         # Alembic 迁移脚本
-├── scripts\seed_demo.py
+├── scripts\
+│   ├── seed_demo.py     # 演示数据
+│   └── evaluate_rag.py  # 固定问题集问答评测
 ├── storage\            # uploads/ 与 chroma/（均被 Git 忽略）
 ├── tests\              # pytest
 ├── alembic.ini
@@ -267,6 +269,7 @@ Authorization: Bearer <access_token>
 | `alembic check` 报差异 | 有人手工改过表结构。新建迁移对齐，不要直接改正式库。 |
 | 上传返回 400 | 只允许 `.pdf` / `.txt`。 |
 | 上传返回 413 | 文件超过 10MB。 |
+| 接口返回 429 | 触发了内置限流（登录/注册/问答/用户搜索），等待响应头 `Retry-After` 的秒数后重试。 |
 | 上传后状态 `FAILED` | 文件损坏、扫描版 PDF 无文本层，或 TXT 编码无法识别；查看 `error_message`。 |
 | 点击“生成回答”提示未配置 Key | 在 `.env` 填写 `LLM_API_KEY` 后重启服务。 |
 | 大模型返回 401/402 | Key 无效或余额不足，检查 DeepSeek 控制台。 |
@@ -283,4 +286,24 @@ Authorization: Bearer <access_token>
 3. JWT 有效期默认 120 分钟，服务端不保存令牌，退出登录由前端删除本地令牌；
 4. 所有权限判断集中在 `services/permissions.py`，接口不能绕过；
 5. 上传文件名由服务端用 UUID 重新生成，防止路径穿越；删除文件时限制在上传目录内；
-6. 检索结果返回前会用 MySQL 当前权限二次校验，成员被移除后旧向量不会泄露内容。
+6. 检索结果返回前会用 MySQL 当前权限二次校验，成员被移除后旧向量不会泄露内容；
+7. 内置进程内限流：注册 5 次/小时/IP、登录 10 次/分钟/IP、问答 20 次/分钟/用户、用户搜索 30 次/分钟/用户，超限返回 429。可用 `RATE_LIMIT_ENABLED=false` 关闭（测试环境已关闭）；
+8. **定位说明**：本项目是单机、受控的本地演示环境，没有多实例共享限流、审计日志、密钥轮换、传输加密等生产能力，请勿直接暴露到公网。
+
+---
+
+## 八、问答质量评测
+
+严格引用校验（`services/rag.py`）要求模型输出有效 `[n]` 编号，否则判定为无依据。改动 Prompt 或校验规则前，先用固定问题集测量，避免凭感觉调整。
+
+```powershell
+.\.venv\Scripts\python.exe scripts\evaluate_rag.py
+```
+
+脚本会重建独立的「RAG评测组」知识库并写入 5 篇制度文档，执行 20 道固定问题（10 可答 + 5 半答 + 5 不可答），统计：
+
+- 可答题拒答率、关键词命中率；
+- 有依据但缺编号的次数、引用越界次数；
+- 不可答题被误答的次数、模型 JSON 解析失败次数、平均耗时。
+
+明细写入 `storage/eval/rag_eval_*.json`。当前基线（deepseek-chat，20 题）：可答题 15/15 保留回答，不可答题 5/5 正确拒答，缺编号与越界均为 0。

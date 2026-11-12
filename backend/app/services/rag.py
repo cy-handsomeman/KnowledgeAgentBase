@@ -59,18 +59,26 @@ def build_messages(
     return messages
 
 
-def parse_answer(raw: str, source_count: int) -> tuple[str, bool]:
+def _strip_code_fence(raw: str) -> str:
     text = raw.strip()
     if text.startswith("```"):
         parts = text.split("```")
         if len(parts) >= 2:
             text = parts[1]
         text = re.sub(r"^json\s*", "", text, flags=re.IGNORECASE)
-    text = text.strip()
+    return text.strip()
 
+
+def parse_model_answer(raw: str) -> ModelAnswer | None:
     try:
-        data = ModelAnswer.model_validate(json.loads(text))
+        return ModelAnswer.model_validate(json.loads(_strip_code_fence(raw)))
     except (json.JSONDecodeError, ValidationError, TypeError, ValueError):
+        return None
+
+
+def parse_answer(raw: str, source_count: int) -> tuple[str, bool]:
+    data = parse_model_answer(raw)
+    if data is None:
         return NO_EVIDENCE_ANSWER, False
 
     answer = data.answer.strip()

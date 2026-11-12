@@ -15,6 +15,7 @@ os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["CHROMA_DIR"] = str(TEST_CHROMA_DIR)
 os.environ["UPLOAD_DIR"] = str(TEST_UPLOAD_DIR)
 os.environ["LLM_API_KEY"] = "replace_me"
+os.environ["RATE_LIMIT_ENABLED"] = "false"
 
 import pymysql
 import pytest

@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from api.deps import get_current_user
+from api.ratelimit import user_rate_limit
 from db.session import get_db
 from models.chat import ChatMessage, ChatSession
 from models.knowledge_base import KnowledgeBase
@@ -18,7 +19,11 @@ from services.retrieval import retrieve_matches
 router = APIRouter(prefix="/api", tags=["ask"])
 
 
-@router.post("/knowledge-bases/{knowledge_base_id}/ask", response_model=AskResponse)
+@router.post(
+    "/knowledge-bases/{knowledge_base_id}/ask",
+    response_model=AskResponse,
+    dependencies=[Depends(user_rate_limit(20, 60, "ask"))],
+)
 def ask_knowledge_base(
     knowledge_base_id: int,
     payload: AskRequest,

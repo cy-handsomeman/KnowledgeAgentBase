@@ -9,6 +9,11 @@ from services.vector_store import search_chunks
 TOP_K = 5
 
 
+def distance_to_score(distance: float) -> float:
+    """把 Chroma 的平方 L2 距离换算为余弦相似度（向量已归一化）。"""
+    return max(0.0, min(1.0, 1 - distance / 2))
+
+
 def retrieve_matches(
     db: Session,
     user_id: int,
@@ -37,10 +42,7 @@ def retrieve_matches(
         if not can_access_document(db, user_id, document.id):
             continue
 
-        distance = float(item["distance"])
-        # Embeddings are unit-normalized and Chroma's default L2 distance is
-        # squared Euclidean distance, so cosine similarity is 1 - distance / 2.
-        score = max(0.0, min(1.0, 1 - distance / 2))
+        score = distance_to_score(float(item["distance"]))
 
         matches.append(
             SearchMatch(

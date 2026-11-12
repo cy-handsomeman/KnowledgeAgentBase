@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     embedding_model: str
     jwt_secret_key: str
     jwt_expire_minutes: int = 120
+    rate_limit_enabled: bool = True
 
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",

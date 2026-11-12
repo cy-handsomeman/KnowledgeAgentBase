@@ -4,5 +4,6 @@ __pycache__/
 .pytest_cache/
 storage/uploads/
 storage/chroma/
+storage/eval/
 storage/uploads_test/
 storage/chroma_test/

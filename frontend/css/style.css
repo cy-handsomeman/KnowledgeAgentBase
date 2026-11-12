@@ -532,6 +532,17 @@ button:disabled {
   word-break: break-word;
 }
 
+.modal-confirm {
+  max-width: 420px;
+}
+
+.modal-confirm p {
+  margin: 0 0 16px;
+  color: #3f3a33;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
 .modal-overlay {
   position: fixed;
   z-index: 10;

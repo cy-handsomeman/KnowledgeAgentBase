@@ -1,4 +1,12 @@
 from models.knowledge_group import GroupMember
+from services.retrieval import distance_to_score
+
+
+def test_distance_to_score_converts_normalized_l2():
+    assert distance_to_score(0) == 1.0
+    assert distance_to_score(0.5) == 0.75
+    assert distance_to_score(2) == 0.0
+    assert distance_to_score(2.5) == 0.0
 
 
 def test_search_returns_relevant_chunk(client, make_user, make_group):

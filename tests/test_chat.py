@@ -1,3 +1,6 @@
+from models.knowledge_group import GroupMember
+
+
 def test_chat_session_flow(client, make_user, make_group):
     owner = make_user("owner")
     _, knowledge_base_id = make_group("聊天测试部", owner["id"])
@@ -42,6 +45,49 @@ def test_chat_session_flow(client, make_user, make_group):
         == 204
     )
     assert client.get("/api/chat/sessions", headers=owner["headers"]).json() == []
+
+
+def test_chat_follows_membership_changes(
+    client, make_user, make_group, add_member, db
+):
+    owner = make_user("owner")
+    member = make_user("member")
+    group_id, knowledge_base_id = make_group("撤权测试部", owner["id"])
+    add_member(group_id, member["id"], "member")
+
+    asked = client.post(
+        f"/api/knowledge-bases/{knowledge_base_id}/ask",
+        headers=member["headers"],
+        json={"question": "值班要提前多久到岗"},
+    )
+    assert asked.status_code == 200
+    session_id = asked.json()["session_id"]
+    assert client.get("/api/chat/sessions", headers=member["headers"]).json()
+
+    db.query(GroupMember).filter_by(
+        group_id=group_id, user_id=member["id"]
+    ).delete()
+    db.commit()
+
+    assert client.get("/api/chat/sessions", headers=member["headers"]).json() == []
+    assert (
+        client.get(
+            f"/api/chat/sessions/{session_id}/messages", headers=member["headers"]
+        ).status_code
+        == 404
+    )
+
+    db.add(GroupMember(group_id=group_id, user_id=member["id"], role="member"))
+    db.commit()
+
+    sessions = client.get("/api/chat/sessions", headers=member["headers"]).json()
+    assert [session["id"] for session in sessions] == [session_id]
+    assert (
+        client.get(
+            f"/api/chat/sessions/{session_id}/messages", headers=member["headers"]
+        ).status_code
+        == 200
+    )
 
 
 def test_ask_rejects_session_with_other_knowledge_base(

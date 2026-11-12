@@ -4,6 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from api.deps import get_current_user
+from api.ratelimit import ip_rate_limit
 from core.security import create_access_token, hash_password, verify_password
 from db.session import get_db
 from models.user import User
@@ -12,7 +13,12 @@ from schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserOut
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-@router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=UserOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(ip_rate_limit(5, 3600, "auth-register"))],
+)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     existing = db.scalar(select(User).where(User.username == payload.username))
     if existing is not None:
@@ -38,7 +44,11 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     return user
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    dependencies=[Depends(ip_rate_limit(10, 60, "auth-login"))],
+)
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.username == payload.username))
     if user is None or not verify_password(payload.password, user.password_hash):

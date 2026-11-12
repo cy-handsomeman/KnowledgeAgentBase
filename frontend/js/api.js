@@ -33,7 +33,9 @@ async function apiFetch(path, options = {}) {
     } catch (error) {
       // 响应不是 JSON 时保留状态码信息
     }
-    throw new Error(detail);
+    const error = new Error(detail);
+    error.status = response.status;
+    throw error;
   }
 
   if (response.status === 204) {

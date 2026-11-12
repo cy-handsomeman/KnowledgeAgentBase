@@ -42,8 +42,17 @@ def chat_completion(
     if response.status_code != 200:
         raise LLMError(f"大模型返回错误：{response.status_code} {response.text[:200]}")
 
-    data = response.json()
     try:
-        return data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError) as error:
+        data = response.json()
+    except ValueError as error:
+        raise LLMError("大模型返回内容不是有效 JSON") from error
+
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as error:
         raise LLMError("大模型返回格式异常") from error
+
+    if not isinstance(content, str) or not content.strip():
+        raise LLMError("大模型返回内容为空")
+
+    return content
