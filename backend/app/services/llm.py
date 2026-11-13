@@ -56,10 +56,10 @@ def chat_completion_message(
             timeout=timeout,
         )
     except httpx.HTTPError as error:
-        raise LLMError(f"调用大模型失败：{error}") from error
+        raise LLMError("调用大模型失败：请求超时或网络连接错误") from error
 
     if response.status_code != 200:
-        raise LLMError(f"大模型返回错误：{response.status_code} {response.text[:200]}")
+        raise LLMError(f"大模型返回错误，HTTP 状态码：{response.status_code}")
 
     try:
         data = response.json()

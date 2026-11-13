@@ -24,7 +24,10 @@ def run_knowledge_agent(
     db: Session = Depends(get_db),
 ):
     try:
-        session_id, answer, sources, has_evidence, steps, created_at = run_agent(
+        (
+            session_id, answer, sources, has_evidence, steps,
+            model_call_count, elapsed_seconds, tool_limit_reached, created_at,
+        ) = run_agent(
             db, current_user.id, knowledge_base_id, payload.question, payload.session_id
         )
     except PermissionError as error:
@@ -42,5 +45,8 @@ def run_knowledge_agent(
         sources=sources,
         has_evidence=has_evidence,
         steps=steps,
+        model_call_count=model_call_count,
+        elapsed_seconds=elapsed_seconds,
+        tool_limit_reached=tool_limit_reached,
         created_at=created_at,
     )

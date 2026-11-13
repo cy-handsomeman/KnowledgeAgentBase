@@ -292,7 +292,7 @@ Authorization: Bearer <access_token>
 5. 上传文件名由服务端用 UUID 重新生成，防止路径穿越；删除文件时限制在上传目录内；
 6. 检索结果返回前会用 MySQL 当前权限二次校验，成员被移除后旧向量不会泄露内容；
 7. 内置进程内限流：注册 5 次/小时/IP、登录 10 次/分钟/IP、问答 20 次/分钟/用户、用户搜索 30 次/分钟/用户，超限返回 429。可用 `RATE_LIMIT_ENABLED=false` 关闭（测试环境已关闭）；
-8. Agent 接口只允许调用服务端注册的只读知识库检索工具，每次调用重新检查当前用户权限，最多 3 次工具调用。检索超过 20 秒会在执行结束后判定超时；由于本地检索同步运行，该检查不能强制中断底层模型计算。每次大模型请求超时为 60 秒，多次调用的总耗时可能更长。
+8. Agent 接口只允许调用服务端注册的只读知识库检索工具，每次调用重新检查当前用户权限，最多 3 次工具调用。单次模型请求最多 60 秒，整个 Agent 流程最多 150 秒。检索超过 20 秒会在执行结束后判定超时；由于本地检索同步运行，该检查不能强制中断底层模型计算。模型 HTTP 请求可由客户端超时终止。
 9. **定位说明**：本项目是单机、受控的本地演示环境，没有多实例共享限流、审计日志、密钥轮换、传输加密等生产能力，请勿直接暴露到公网。
 
 ---
@@ -315,4 +315,11 @@ Authorization: Bearer <access_token>
 
 ### Agent 工具调用演示
 
-新增接口 `POST /api/knowledge-bases/{id}/agent`，请求体为 `{"question":"差旅住宿标准是什么？","session_id":null}`。Agent 先通过只读工具 `search_knowledge_base` 检索，服务端校验工具名/参数并重新检查知识库权限，再复用现有检索逻辑；最多 3 次工具调用，最终答案复用 RAG 引用编号校验。响应额外包含 `steps`（工具名、查询词、命中数）。这是受控演示流程，不是生产级 Agent Runtime。
+新增接口 `POST /api/knowledge-bases/{id}/agent`，请求体为 `{"question":"差旅住宿标准是什么？","session_id":null}`。Agent 先通过只读工具 `search_knowledge_base` 检索，服务端校验工具名/参数并重新检查知识库权限，再复用现有检索逻辑；最多 3 次工具调用，最终答案复用 RAG 引用编号校验。响应包含 `steps`、`model_call_count` 和 `elapsed_seconds`。这是受控演示流程，不是生产级 Agent Runtime。
+
+Agent 固定问题集评测使用单独的本机数据库，必须显式设置数据库名以 `_eval` 结尾的 `AGENT_EVAL_DATABASE_URL`。评测会创建缺失表、重建专用评测用户/知识库、调用真实模型并在结束后清理专用评测范围；请确认目标库可删除且已配置模型 API。报告写入 `storage/eval/agent_eval_*.json`，包含任务完成率、工具选择、调用次数、拒答、引用、权限探测、耗时及模型调用数。模型费用未从供应商账单读取，故不报告费用金额。
+
+```powershell
+$env:AGENT_EVAL_DATABASE_URL = "mysql+pymysql://评测用户名:评测密码@127.0.0.1:3306/enterprise_kb_eval"
+.\.venv\Scripts\python.exe scripts\evaluate_agent.py
+```

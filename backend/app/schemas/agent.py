@@ -22,4 +22,7 @@ class AgentResponse(BaseModel):
     sources: list[SourceOut]
     has_evidence: bool
     steps: list[AgentStepOut]
+    model_call_count: int
+    elapsed_seconds: float
+    tool_limit_reached: bool
     created_at: datetime

@@ -16,6 +16,8 @@ from services.retrieval import retrieve_matches
 
 MAX_TOOL_CALLS = 3
 TOOL_DEADLINE_SECONDS = 20.0
+AGENT_DEADLINE_SECONDS = 150.0
+LLM_REQUEST_TIMEOUT_SECONDS = 60.0
 TOOL_NAME = "search_knowledge_base"
 NO_EVIDENCE_ANSWER = "根据现有资料无法回答。"
 
@@ -114,15 +116,27 @@ def run_agent(db: Session, user_id: int, kb_id: int, question: str, session_id: 
     matches = []
     steps: list[AgentStepOut] = []
     answer_raw = ""
+    started_total = time.monotonic()
+    model_call_count = 0
+    tool_limit_reached = False
 
     for _ in range(MAX_TOOL_CALLS + 1):
-        message = chat_completion_message(messages, tools=[SEARCH_TOOL])
+        remaining = AGENT_DEADLINE_SECONDS - (time.monotonic() - started_total)
+        if remaining <= 0:
+            raise LLMError("Agent 执行超过总时限")
+        model_call_count += 1
+        message = chat_completion_message(
+            messages,
+            tools=[SEARCH_TOOL],
+            timeout=min(LLM_REQUEST_TIMEOUT_SECONDS, remaining),
+        )
         calls = message.get("tool_calls") or []
         if not calls:
             answer_raw = message.get("content") or ""
             break
         messages.append(message)
         if not within_tool_budget(len(steps), len(calls)):
+            tool_limit_reached = True
             answer_raw = ""
             break
         for call in calls:
@@ -131,7 +145,10 @@ def run_agent(db: Session, user_id: int, kb_id: int, question: str, session_id: 
             if not can_access_knowledge_base(db, user_id, kb_id):
                 raise PermissionError("知识库不存在或无权访问")
             started_at = time.monotonic()
-            found = retrieve_matches(db, user_id, kb_id, args.query, limit=args.top_k)
+            try:
+                found = retrieve_matches(db, user_id, kb_id, args.query, limit=args.top_k)
+            except Exception as error:
+                raise LLMError("知识库检索工具执行失败") from error
             if time.monotonic() - started_at > TOOL_DEADLINE_SECONDS:
                 raise LLMError("知识库检索超过单次工具执行时限")
             matches.extend(found)
@@ -158,6 +175,7 @@ def run_agent(db: Session, user_id: int, kb_id: int, question: str, session_id: 
                    snippet=m.content[:200]) for m in matches]
         if has_evidence else []
     )
+    elapsed_seconds = round(time.monotonic() - started_total, 3)
     db.add(ChatMessage(session_id=session.id, role="user", content=question))
     assistant = ChatMessage(
         session_id=session.id, role="assistant", content=answer,
@@ -166,4 +184,7 @@ def run_agent(db: Session, user_id: int, kb_id: int, question: str, session_id: 
     db.add(assistant)
     db.commit()
     db.refresh(assistant)
-    return session.id, answer, sources, has_evidence, steps, assistant.created_at
+    return (
+        session.id, answer, sources, has_evidence, steps,
+        model_call_count, elapsed_seconds, tool_limit_reached, assistant.created_at,
+    )
