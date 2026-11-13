@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from api.auth import router as auth_router
+from api.agent import router as agent_router
 from api.ask import router as ask_router
 from api.chat import router as chat_router
 from api.documents import router as documents_router
@@ -19,6 +20,7 @@ FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
 app = FastAPI(title="企业文档知识库")
 app.include_router(auth_router)
+app.include_router(agent_router)
 app.include_router(groups_router)
 app.include_router(knowledge_bases_router)
 app.include_router(documents_router)

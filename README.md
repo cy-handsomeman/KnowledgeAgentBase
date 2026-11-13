@@ -189,11 +189,14 @@ http://127.0.0.1:8000/docs
 
 ### 10. 运行测试
 
+测试连接必须通过 `TEST_DATABASE_URL` 显式配置，且必须是本机 MySQL、数据库名以 `_test` 结尾。测试开始和结束都会清空该测试库的表，请使用独立且可删除的测试数据库。
+
 ```powershell
+$env:TEST_DATABASE_URL = "mysql+pymysql://测试用户名:测试密码@127.0.0.1:3306/enterprise_kb_test"
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-测试使用独立数据库 `enterprise_kb_test`、独立上传目录和向量目录，不会污染开发数据；首次运行会自动建库建表。
+未设置安全的 `TEST_DATABASE_URL` 时测试会拒绝启动。测试库、上传目录和 Chroma 目录均应与开发数据隔离；首次运行会在指定 MySQL 实例中创建测试数据库。
 
 ---
 
@@ -244,6 +247,7 @@ D:\1mywork\AgentSpace
 | POST | `/api/documents/{id}/reindex` | 重建片段与向量 |
 | POST | `/api/knowledge-bases/{id}/search` | 检索片段（不生成回答） |
 | POST | `/api/knowledge-bases/{id}/ask` | RAG 问答（生成回答 + 来源，支持 `session_id` 多轮） |
+| POST | `/api/knowledge-bases/{id}/agent` | 受控 Agent（只读检索工具，最多 3 次调用，返回执行步骤） |
 | GET | `/api/chat/sessions` | 我的会话列表 |
 | GET | `/api/chat/sessions/{id}/messages` | 会话消息 |
 | DELETE | `/api/chat/sessions/{id}` | 删除会话 |
@@ -275,7 +279,7 @@ Authorization: Bearer <access_token>
 | 大模型返回 401/402 | Key 无效或余额不足，检查 DeepSeek 控制台。 |
 | 首次索引很慢 / 模型下载失败 | 需要下载 BGE 权重。网络受限时先设置镜像：`$env:HF_ENDPOINT="https://hf-mirror.com"` 再启动。 |
 | 页面 404 但接口正常 | 静态文件挂载后需要完整重启一次服务。 |
-| 测试污染数据 | 测试默认使用 `enterprise_kb_test`；如果看到开发库变化，检查 `tests/conftest.py` 的环境变量是否被改动。 |
+| 测试拒绝启动 | 先设置 `TEST_DATABASE_URL`，确认它是本机 MySQL 且数据库名以 `_test` 结尾；测试会清理该库所有模型表。 |
 
 ---
 
@@ -288,7 +292,8 @@ Authorization: Bearer <access_token>
 5. 上传文件名由服务端用 UUID 重新生成，防止路径穿越；删除文件时限制在上传目录内；
 6. 检索结果返回前会用 MySQL 当前权限二次校验，成员被移除后旧向量不会泄露内容；
 7. 内置进程内限流：注册 5 次/小时/IP、登录 10 次/分钟/IP、问答 20 次/分钟/用户、用户搜索 30 次/分钟/用户，超限返回 429。可用 `RATE_LIMIT_ENABLED=false` 关闭（测试环境已关闭）；
-8. **定位说明**：本项目是单机、受控的本地演示环境，没有多实例共享限流、审计日志、密钥轮换、传输加密等生产能力，请勿直接暴露到公网。
+8. Agent 接口只允许调用服务端注册的只读知识库检索工具，每次调用重新检查当前用户权限，最多 3 次工具调用。检索超过 20 秒会在执行结束后判定超时；由于本地检索同步运行，该检查不能强制中断底层模型计算。每次大模型请求超时为 60 秒，多次调用的总耗时可能更长。
+9. **定位说明**：本项目是单机、受控的本地演示环境，没有多实例共享限流、审计日志、密钥轮换、传输加密等生产能力，请勿直接暴露到公网。
 
 ---
 
@@ -306,4 +311,8 @@ Authorization: Bearer <access_token>
 - 有依据但缺编号的次数、引用越界次数；
 - 不可答题被误答的次数、模型 JSON 解析失败次数、平均耗时。
 
-明细写入 `storage/eval/rag_eval_*.json`。当前基线（deepseek-chat，20 题）：可答题 15/15 保留回答，不可答题 5/5 正确拒答，缺编号与越界均为 0。
+明细写入 `storage/eval/rag_eval_*.json`，记录模型、生成时间、问题数、单题耗时和检索预期关键词命中代理指标。该指标不等同于人工相关性判断或通用召回率。脚本仅清理由专用评测用户 `rag_eval_bot` 创建的同名评测组及该用户数据；运行前确认 `.env` 指向可写的本地评测环境，调用模型会产生 API 费用。当前基线（deepseek-chat，20 题）：可答题 15/15 保留回答，不可答题 5/5 正确拒答，缺编号与越界均为 0。
+
+### Agent 工具调用演示
+
+新增接口 `POST /api/knowledge-bases/{id}/agent`，请求体为 `{"question":"差旅住宿标准是什么？","session_id":null}`。Agent 先通过只读工具 `search_knowledge_base` 检索，服务端校验工具名/参数并重新检查知识库权限，再复用现有检索逻辑；最多 3 次工具调用，最终答案复用 RAG 引用编号校验。响应额外包含 `steps`（工具名、查询词、命中数）。这是受控演示流程，不是生产级 Agent Runtime。

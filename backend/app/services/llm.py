@@ -17,6 +17,23 @@ def chat_completion(
     timeout: float = 60.0,
     json_mode: bool = False,
 ) -> str:
+    message = chat_completion_message(
+        messages, temperature=temperature, timeout=timeout, json_mode=json_mode
+    )
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise LLMError("大模型返回内容为空")
+    return content
+
+
+def chat_completion_message(
+    messages: list[dict],
+    temperature: float = 0.2,
+    timeout: float = 60.0,
+    json_mode: bool = False,
+    tools: list[dict] | None = None,
+) -> dict:
+    """Return the assistant message, optionally including compatible tool calls."""
     if not is_llm_configured():
         raise LLMError("尚未配置大模型 API Key，请在 .env 中填写 LLM_API_KEY")
 
@@ -28,6 +45,8 @@ def chat_completion(
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
+    if tools:
+        payload["tools"] = tools
 
     try:
         response = httpx.post(
@@ -48,11 +67,10 @@ def chat_completion(
         raise LLMError("大模型返回内容不是有效 JSON") from error
 
     try:
-        content = data["choices"][0]["message"]["content"]
+        message = data["choices"][0]["message"]
     except (KeyError, IndexError, TypeError) as error:
         raise LLMError("大模型返回格式异常") from error
 
-    if not isinstance(content, str) or not content.strip():
-        raise LLMError("大模型返回内容为空")
-
-    return content
+    if not isinstance(message, dict):
+        raise LLMError("大模型返回格式异常")
+    return message

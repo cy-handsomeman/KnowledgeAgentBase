@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "backend" / "app"))
 from sqlalchemy import delete, select  # noqa: E402
 
 from core.security import hash_password  # noqa: E402
+from core.settings import settings  # noqa: E402
 from db.session import SessionLocal  # noqa: E402
 from models.chat import ChatSession  # noqa: E402
 from models.document import Document  # noqa: E402
@@ -92,8 +93,14 @@ CITATION_PATTERN = re.compile(r"\[(\d+)\]")
 
 
 def _delete_eval_groups(db) -> tuple[int, int]:
+    user = db.scalar(select(User).where(User.username == EVAL_USERNAME))
+    if user is None:
+        return 0, 0
     groups = db.scalars(
-        select(KnowledgeGroup).where(KnowledgeGroup.name == EVAL_GROUP_NAME)
+        select(KnowledgeGroup).where(
+            KnowledgeGroup.name == EVAL_GROUP_NAME,
+            KnowledgeGroup.created_by == user.id,
+        )
     ).all()
     document_count = 0
     for group in groups:
@@ -193,11 +200,18 @@ def seed_documents(db, user, knowledge_base):
 def evaluate_one(db, user, knowledge_base, item):
     started = time.perf_counter()
     matches = retrieve_matches(db, user.id, knowledge_base.id, item["question"])
+    expected = item.get("expect") or []
+    retrieval_keyword_hit = (
+        any(keyword in match.content for keyword in expected for match in matches)
+        if expected
+        else None
+    )
     if not matches:
         return {
             "question": item["question"],
             "type": item["type"],
             "matches": 0,
+            "retrieval_expected_keyword_hit": retrieval_keyword_hit,
             "raw_json_ok": None,
             "model_has_evidence": None,
             "citation_numbers": [],
@@ -217,6 +231,7 @@ def evaluate_one(db, user, knowledge_base, item):
             "question": item["question"],
             "type": item["type"],
             "matches": len(matches),
+            "retrieval_expected_keyword_hit": retrieval_keyword_hit,
             "raw_json_ok": False,
             "model_has_evidence": None,
             "citation_numbers": [],
@@ -237,7 +252,6 @@ def evaluate_one(db, user, knowledge_base, item):
     invalid_citation = any(
         number < 1 or number > len(matches) for number in citations
     )
-    expected = item.get("expect") or []
     keyword_hit = (
         any(keyword in answer for keyword in expected) if expected and has_evidence else None
     )
@@ -246,6 +260,7 @@ def evaluate_one(db, user, knowledge_base, item):
         "question": item["question"],
         "type": item["type"],
         "matches": len(matches),
+        "retrieval_expected_keyword_hit": retrieval_keyword_hit,
         "raw_json_ok": model_answer is not None,
         "model_has_evidence": model_answer.has_evidence if model_answer else None,
         "citation_numbers": citations,
@@ -270,6 +285,8 @@ def summarize(rows):
     ]
     invalid_citation = [row for row in answerable if row["invalid_citation"]]
     keyword_miss = [row for row in kept if row["keyword_hit"] is False]
+    retrieval_checked = [row for row in rows if row["retrieval_expected_keyword_hit"] is not None]
+    retrieval_miss = [row for row in retrieval_checked if not row["retrieval_expected_keyword_hit"]]
     answered_unanswerable = [row for row in unanswerable if row["final_has_evidence"]]
 
     return {
@@ -280,6 +297,9 @@ def summarize(rows):
             (len(answerable) - len(kept)) / len(answerable), 3
         ),
         "keyword_miss_rate": round(len(keyword_miss) / len(kept), 3) if kept else 0,
+        "retrieval_expected_keyword_hit_rate": round(
+            (len(retrieval_checked) - len(retrieval_miss)) / len(retrieval_checked), 3
+        ) if retrieval_checked else None,
         "no_citation_with_evidence": len(no_citation),
         "invalid_citation": len(invalid_citation),
         "unanswerable_total": len(unanswerable),
@@ -337,7 +357,14 @@ def main():
     output_path = output_dir / f"rag_eval_{datetime.now():%Y%m%d_%H%M%S}.json"
     output_path.write_text(
         json.dumps(
-            {"summary": summary, "rows": rows},
+            {
+                "generated_at": datetime.now().astimezone().isoformat(),
+                "model": settings.llm_model,
+                "question_count": len(QUESTIONS),
+                "metrics_note": "检索关键词命中是固定评测集代理指标，不等同于人工相关性判断或通用检索召回率。",
+                "summary": summary,
+                "rows": rows,
+            },
             ensure_ascii=False,
             indent=2,
         ),

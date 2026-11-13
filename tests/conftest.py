@@ -7,9 +7,28 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "backend" / "app"))
 
-TEST_DATABASE_URL = "mysql+pymysql://root:12345678@127.0.0.1:3306/enterprise_kb_test"
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 TEST_CHROMA_DIR = PROJECT_ROOT / "storage" / "chroma_test"
 TEST_UPLOAD_DIR = PROJECT_ROOT / "storage" / "uploads_test"
+
+if not TEST_DATABASE_URL:
+    raise RuntimeError(
+        "拒绝启动测试：请通过 TEST_DATABASE_URL 显式配置专用测试数据库连接"
+    )
+
+from sqlalchemy.engine import make_url as _make_url
+
+_test_url = _make_url(TEST_DATABASE_URL)
+if (
+    _test_url.drivername != "mysql+pymysql"
+    or not _test_url.database
+    or not _test_url.username
+    or not _test_url.database.endswith("_test")
+    or _test_url.host not in {"127.0.0.1", "localhost", "::1"}
+):
+    raise RuntimeError(
+        "拒绝启动测试：TEST_DATABASE_URL 必须是本机 MySQL 且数据库名以 _test 结尾"
+    )
 
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["CHROMA_DIR"] = str(TEST_CHROMA_DIR)
@@ -33,6 +52,8 @@ from models.knowledge_group import GroupMember, KnowledgeGroup
 
 def _create_test_database() -> None:
     url = make_url(settings.database_url)
+    if url.database != _test_url.database or not url.database.endswith("_test"):
+        raise RuntimeError("拒绝清理：最终数据库连接未通过测试库名称校验")
     connection = pymysql.connect(
         host=url.host,
         port=url.port,
