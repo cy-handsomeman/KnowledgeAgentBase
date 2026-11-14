@@ -356,7 +356,7 @@ export async function renderChat() {
     state.currentSessionId = null;
     state.chatMessages = [];
     renderChatMessages();
-  } else if (initialQuestion) {
+  } else if (initialQuestion && defaultKb) {
     state.currentSessionId = null;
     state.chatMessages = [];
     renderChatMessages();

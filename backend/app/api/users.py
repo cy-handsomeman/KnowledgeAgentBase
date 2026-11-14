@@ -25,9 +25,13 @@ def search_users(
     if len(keyword) < 2:
         return []
 
+    # 转义 LIKE 通配符，避免用 "%"、"_" 绕过前缀匹配枚举用户。
+    pattern = (
+        keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
     return db.scalars(
         select(User)
-        .where(User.username.like(f"{keyword}%"))
+        .where(User.username.like(f"{pattern}%", escape="\\"))
         .order_by(User.username)
         .limit(10)
     ).all()

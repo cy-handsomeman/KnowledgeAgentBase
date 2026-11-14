@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from api.deps import get_current_user
 from db.session import get_db
+from models.chat import ChatSession
 from models.document import Document
 from models.knowledge_base import KnowledgeBase
 from models.knowledge_group import GroupMember, KnowledgeGroup
@@ -184,6 +185,12 @@ def delete_knowledge_base(
             detail="知识库中还有文档，请先清空文档再删除",
         )
 
+    # 会话引用知识库的外键没有级联，删除知识库前先清理其下会话（消息由数据库级联删除）。
+    db.execute(
+        delete(ChatSession).where(
+            ChatSession.knowledge_base_id == knowledge_base_id
+        )
+    )
     knowledge_base = db.get(KnowledgeBase, knowledge_base_id)
     db.delete(knowledge_base)
     db.commit()

@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
@@ -178,6 +179,7 @@ def run_agent(db: Session, user_id: int, kb_id: int, question: str, session_id: 
         if has_evidence else []
     )
     elapsed_seconds = round(time.monotonic() - started_total, 3)
+    session.updated_at = datetime.now()
     db.add(ChatMessage(session_id=session.id, role="user", content=question))
     assistant = ChatMessage(
         session_id=session.id, role="assistant", content=answer,

@@ -180,6 +180,29 @@ def test_rename_and_delete_knowledge_base(client, make_user):
     )
 
 
+def test_delete_knowledge_base_with_chat_sessions(client, make_user):
+    user = make_user("kb_session_owner")
+    created = client.post(
+        "/api/knowledge-bases",
+        headers=user["headers"],
+        json={"name": "有会话的个人库", "scope_type": "personal"},
+    ).json()
+
+    asked = client.post(
+        f"/api/knowledge-bases/{created['id']}/ask",
+        headers=user["headers"],
+        json={"question": "还没有资料时提问"},
+    )
+    assert asked.status_code == 200
+    assert client.get("/api/chat/sessions", headers=user["headers"]).json()
+
+    deleted = client.delete(
+        f"/api/knowledge-bases/{created['id']}", headers=user["headers"]
+    )
+    assert deleted.status_code == 204
+    assert client.get("/api/chat/sessions", headers=user["headers"]).json() == []
+
+
 def test_search_users_by_prefix(client, make_user):
     alice = make_user("searchalice")
     bob = make_user("searchbob")
@@ -190,3 +213,4 @@ def test_search_users_by_prefix(client, make_user):
 
     assert any(user["username"] == alice["username"] for user in results)
     assert client.get("/api/users?username=a", headers=bob["headers"]).json() == []
+    assert client.get("/api/users?username=%25%25", headers=bob["headers"]).json() == []

@@ -274,6 +274,30 @@ def test_agent_bounds_model_timeout_by_remaining_budget(
     assert 0 < captured["timeout"] <= 10
 
 
+def test_agent_run_refreshes_session_order_timestamp(
+    db, make_user, make_personal_kb, monkeypatch
+):
+    from datetime import datetime
+
+    from models.chat import ChatSession
+    from services import agent
+
+    user = make_user("agent_session_time")
+    kb_id = make_personal_kb(user["id"])
+    session = ChatSession(
+        user_id=user["id"], title="旧会话", scope_type="personal",
+        knowledge_base_id=kb_id, updated_at=datetime(2020, 1, 1),
+    )
+    db.add(session)
+    db.commit()
+    monkeypatch.setattr(agent, "chat_completion_message", lambda *a, **k: {"content": ""})
+    monkeypatch.setattr(agent, "retrieve_matches", lambda *a, **k: [])
+
+    run_agent(db, user["id"], kb_id, "继续提问", session.id)
+    db.refresh(session)
+    assert session.updated_at > datetime(2020, 1, 1)
+
+
 def test_llm_error_hides_upstream_body_and_credentials(monkeypatch):
     from services import llm
 
