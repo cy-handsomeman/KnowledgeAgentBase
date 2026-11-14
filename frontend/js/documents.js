@@ -225,6 +225,13 @@ function openUploadedViewer(overlay, knowledgeBase, documentData, editable) {
   renderDocumentError(errorBox, documentData);
   const downloadButton = overlay.querySelector("#doc-download");
   let objectUrl = null;
+  let fileBlob = null;
+  downloadButton.disabled = true;
+  downloadButton.addEventListener("click", () => {
+    if (fileBlob) {
+      downloadBlob(fileBlob, documentData.original_filename || documentData.title);
+    }
+  });
 
   const close = () => {
     if (objectUrl) {
@@ -258,16 +265,14 @@ function openUploadedViewer(overlay, knowledgeBase, documentData, editable) {
 
   (async () => {
     try {
-      const blob = await fetchDocumentBlob(documentData.id);
-      downloadButton.addEventListener("click", () => {
-        downloadBlob(blob, documentData.original_filename || documentData.title);
-      });
+      fileBlob = await fetchDocumentBlob(documentData.id);
+      downloadButton.disabled = false;
 
       if (documentData.file_type === "pdf") {
-        objectUrl = URL.createObjectURL(blob);
+        objectUrl = URL.createObjectURL(fileBlob);
         container.innerHTML = `<embed class="pdf-embed" type="application/pdf" src="${objectUrl}">`;
       } else {
-        const text = await blob.text();
+        const text = await fileBlob.text();
         const pre = document.createElement("pre");
         pre.className = "doc-text";
         pre.textContent = text;

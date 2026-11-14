@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from api.deps import get_current_user
 from db.session import get_db
 from models.chat import ChatMessage, ChatSession
+from models.knowledge_base import KnowledgeBase
+from models.knowledge_group import GroupMember
 from models.user import User
 from schemas.chat import ChatMessageOut, ChatSessionOut
 from services.permissions import can_access_knowledge_base
@@ -27,18 +29,33 @@ def list_sessions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # 用一次联表查询完成权限过滤，避免逐个会话回查知识库与群组成员。
     sessions = db.scalars(
         select(ChatSession)
-        .where(ChatSession.user_id == current_user.id)
+        .join(KnowledgeBase, KnowledgeBase.id == ChatSession.knowledge_base_id)
+        .outerjoin(
+            GroupMember,
+            and_(
+                GroupMember.group_id == KnowledgeBase.group_id,
+                GroupMember.user_id == current_user.id,
+            ),
+        )
+        .where(
+            ChatSession.user_id == current_user.id,
+            or_(
+                and_(
+                    KnowledgeBase.scope_type == "personal",
+                    KnowledgeBase.owner_user_id == current_user.id,
+                ),
+                and_(
+                    KnowledgeBase.scope_type == "enterprise_group",
+                    GroupMember.user_id == current_user.id,
+                ),
+            ),
+        )
         .order_by(ChatSession.updated_at.desc(), ChatSession.id.desc())
     ).all()
-    return [
-        session
-        for session in sessions
-        if can_access_knowledge_base(
-            db, current_user.id, session.knowledge_base_id
-        )
-    ]
+    return list(sessions)
 
 
 @router.get("/sessions/{session_id}/messages", response_model=list[ChatMessageOut])

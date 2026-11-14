@@ -147,12 +147,14 @@ def run_agent(db: Session, user_id: int, kb_id: int, question: str, session_id: 
             # Re-check authorization at every tool dispatch.
             if not can_access_knowledge_base(db, user_id, kb_id):
                 raise PermissionError("知识库不存在或无权访问")
+            budget_left = AGENT_DEADLINE_SECONDS - (time.monotonic() - started_total)
+            tool_deadline = min(TOOL_DEADLINE_SECONDS, budget_left)
             started_at = time.monotonic()
             try:
                 found = retrieve_matches(db, user_id, kb_id, args.query, limit=args.top_k)
             except Exception as error:
                 raise LLMError("知识库检索工具执行失败") from error
-            if time.monotonic() - started_at > TOOL_DEADLINE_SECONDS:
+            if time.monotonic() - started_at > tool_deadline:
                 raise LLMError("知识库检索超过单次工具执行时限")
             matches.extend(found)
             step = AgentStepOut(tool=TOOL_NAME, query=args.query, result_count=len(found))
