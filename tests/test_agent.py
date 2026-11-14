@@ -163,7 +163,7 @@ def test_agent_stops_after_tool_budget_and_rejects_invalid_citation(
 
 
 def test_agent_wraps_tool_failures_and_checks_session_ownership(
-    db, make_user, make_personal_kb, monkeypatch
+    db, make_user, make_personal_kb, make_group, monkeypatch
 ):
     from services import agent
 
@@ -182,7 +182,7 @@ def test_agent_wraps_tool_failures_and_checks_session_ownership(
     )
     db.add(own_session)
     db.commit()
-    another_kb_id = make_personal_kb(user["id"])
+    another_kb_id = make_group("Agent 另一个部", user["id"])[1]
     with pytest.raises(ValueError):
         agent._history(db, own_session.id, user["id"], another_kb_id)
 
