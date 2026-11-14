@@ -212,3 +212,82 @@ def test_agent_reports_tool_deadline_as_safe_error(
     monkeypatch.setattr(agent, "TOOL_DEADLINE_SECONDS", -1)
     with pytest.raises(LLMError, match="超过单次工具执行时限"):
         run_agent(db, user["id"], kb_id, "q", None)
+
+
+def test_agent_rejects_non_string_final_response(
+    db, make_user, make_personal_kb, monkeypatch
+):
+    from services import agent
+
+    user = make_user("agent_invalid_response")
+    kb_id = make_personal_kb(user["id"])
+    responses = iter([
+        {"tool_calls": [{"id": "call-1", "function": {
+            "name": TOOL_NAME, "arguments": '{"query":"q"}',
+        }}]},
+        {"content": {"answer": "无效响应"}},
+    ])
+    monkeypatch.setattr(agent, "chat_completion_message", lambda *a, **k: next(responses))
+    monkeypatch.setattr(agent, "retrieve_matches", lambda *a, **k: [SearchMatch(
+        document_id=9, document_title="制度", chunk_id=12, chunk_index=0,
+        page_number=None, content="内容", score=0.9,
+    )])
+
+    with pytest.raises(LLMError, match="大模型返回格式异常") as exc_info:
+        run_agent(db, user["id"], kb_id, "q", None)
+    assert "无效响应" not in str(exc_info.value)
+
+
+def test_agent_enforces_total_deadline_before_model_call(
+    db, make_user, make_personal_kb, monkeypatch
+):
+    from services import agent
+
+    user = make_user("agent_total_deadline")
+    kb_id = make_personal_kb(user["id"])
+    monkeypatch.setattr(agent, "AGENT_DEADLINE_SECONDS", 0)
+
+    def unexpected_model_call(*args, **kwargs):
+        raise AssertionError("超过总时限后不应调用模型")
+
+    monkeypatch.setattr(agent, "chat_completion_message", unexpected_model_call)
+    with pytest.raises(LLMError, match="Agent 执行超过总时限"):
+        run_agent(db, user["id"], kb_id, "q", None)
+
+
+def test_agent_bounds_model_timeout_by_remaining_budget(
+    db, make_user, make_personal_kb, monkeypatch
+):
+    from services import agent
+
+    user = make_user("agent_model_timeout")
+    kb_id = make_personal_kb(user["id"])
+    monkeypatch.setattr(agent, "AGENT_DEADLINE_SECONDS", 10)
+    captured = {}
+
+    def model_reply(*args, **kwargs):
+        captured.update(kwargs)
+        return {"content": ""}
+
+    monkeypatch.setattr(agent, "chat_completion_message", model_reply)
+    run_agent(db, user["id"], kb_id, "q", None)
+    assert 0 < captured["timeout"] <= 10
+
+
+def test_llm_error_hides_upstream_body_and_credentials(monkeypatch):
+    from services import llm
+
+    class Response:
+        status_code = 502
+        text = "上游敏感正文"
+
+    monkeypatch.setattr(llm.settings, "llm_api_key", "测试凭据")
+    monkeypatch.setattr(llm.httpx, "post", lambda *args, **kwargs: Response())
+
+    with pytest.raises(LLMError) as exc_info:
+        llm.chat_completion_message([{"role": "user", "content": "q"}])
+
+    message = str(exc_info.value)
+    assert "502" in message
+    assert "上游敏感正文" not in message
+    assert "测试凭据" not in message

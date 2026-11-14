@@ -132,7 +132,9 @@ def run_agent(db: Session, user_id: int, kb_id: int, question: str, session_id: 
         )
         calls = message.get("tool_calls") or []
         if not calls:
-            answer_raw = message.get("content") or ""
+            answer_raw = message.get("content")
+            if not isinstance(answer_raw, str):
+                raise LLMError("大模型返回格式异常")
             break
         messages.append(message)
         if not within_tool_budget(len(steps), len(calls)):
